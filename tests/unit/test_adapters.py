@@ -5,7 +5,12 @@ import pytest
 from tests.fakes.core import FakeCommandResult, FakeCommandRunner
 from wp_modernizer.config.models import DatabaseConfig, ServerConfig
 from wp_modernizer.domain.enums import Environment
-from wp_modernizer.domain.errors import AuthenticationError, ConfigurationError, InfrastructureError
+from wp_modernizer.domain.errors import (
+    AuthenticationError,
+    ConfigurationError,
+    InfrastructureError,
+    UnsafeOperationError,
+)
 from wp_modernizer.infrastructure.filesystem import LocalFileSystem
 from wp_modernizer.infrastructure.mysql.adapter import MySQLAdapter
 from wp_modernizer.infrastructure.secrets import EnvironmentSecretProvider
@@ -42,6 +47,16 @@ def test_mysql_schema_discovery_and_authentication_error() -> None:
         denied.list_schemas("db")
 
 
+def test_mysql_never_imports_into_production() -> None:
+    production = database().model_copy(update={"environment": Environment.PRODUCTION})
+    runner = FakeCommandRunner()
+    with pytest.raises(UnsafeOperationError, match="fora de TESTE"):
+        MySQLAdapter({"db": production}, Secrets(), runner).import_dump(
+            "db", "site", Path("/tmp/dump.sql"), "r"
+        )
+    assert runner.calls == []
+
+
 def test_mysql_widget_snapshot_preserves_binary_and_rejects_bad_table() -> None:
     runner = FakeCommandRunner(
         [
@@ -70,6 +85,14 @@ def test_wpcli_adapter_dry_run_multisite_and_failure() -> None:
         WPCLIAdapter(FakeCommandRunner([FakeCommandResult(1, stderr="failed")])).update(
             Path("/site"), ["core", "update"], "r"
         )
+
+
+def test_wpcli_writes_config_values_via_stdin_not_argv() -> None:
+    runner = FakeCommandRunner()
+    WPCLIAdapter(runner).set_config(Path("/site"), {"DB_PASSWORD": "never-in-argv"}, "run-1")
+    assert "--prompt=value" in runner.calls[0]
+    assert "DB_PASSWORD" in runner.calls[0]
+    assert "never-in-argv" not in runner.calls[0]
 
 
 def test_ssh_is_key_first_and_password_adapter_is_refused() -> None:
