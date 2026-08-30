@@ -15,11 +15,11 @@ from wp_modernizer.application.ports import (
 from wp_modernizer.config.models import ApplicationConfig
 from wp_modernizer.domain.enums import Environment, Operation, PendingOperationType, RunStatus
 from wp_modernizer.domain.errors import ConfigurationError, UnsafeOperationError
-from wp_modernizer.domain.models import PendingOperation, RunManifest
+from wp_modernizer.domain.models import MigrationPlan, PendingOperation, RunManifest
 from wp_modernizer.domain.path_parser import InstallationPathParser
 from wp_modernizer.domain.planning import MigrationPlanner
 from wp_modernizer.pipeline.runner import PipelineRunner
-from wp_modernizer.pipeline.steps import UPDATE_STEP_NAMES, OperationStep
+from wp_modernizer.pipeline.steps import OperationStep, planned_update_steps
 
 
 class ModernizerService:
@@ -85,6 +85,11 @@ class ModernizerService:
         return report
 
     def plan(self, installation_id: str) -> Dict[str, Any]:
+        return cast(
+            Dict[str, Any], self._serializable(asdict(self._migration_plan(installation_id)))
+        )
+
+    def _migration_plan(self, installation_id: str) -> MigrationPlan:
         item = self._installation(installation_id)
         installations = []
         for key, candidate in self.config.installations.items():
@@ -104,7 +109,7 @@ class ModernizerService:
                 "executa somente após uma simulação bem-sucedida com WP-CLI reduzido",
             ),
         )
-        plan = MigrationPlanner().build(
+        return MigrationPlanner().build(
             installation_id,
             item.source_environment,
             item.source_server,
@@ -112,7 +117,6 @@ class ModernizerService:
             installations,
             pending,
         )
-        return cast(Dict[str, Any], self._serializable(asdict(plan)))
 
     def execute(
         self,
@@ -125,18 +129,27 @@ class ModernizerService:
     ) -> RunManifest:
         item = self._installation(installation_id)
         path = item.destination_path
-        migration_names = tuple(step["name"] for step in self.plan(installation_id)["steps"])
+        migration_plan = self._migration_plan(installation_id)
+        update_steps = planned_update_steps(installation_id)
         if operation is Operation.MIGRATE:
-            names = migration_names
+            planned_steps = migration_plan.steps
         elif operation is Operation.UPDATE:
-            names = UPDATE_STEP_NAMES
+            planned_steps = update_steps
         elif operation is Operation.PIPELINE:
-            names = migration_names + UPDATE_STEP_NAMES
+            planned_steps = migration_plan.steps + update_steps
         else:
             raise ConfigurationError(f"Operação de execução não suportada: {operation.value}")
         run_id = self._ids.new()
         manifest = RunManifest(
-            run_id, installation_id, operation, RunStatus.RUNNING, self._clock.now_iso(), dry_run
+            run_id,
+            installation_id,
+            operation,
+            RunStatus.RUNNING,
+            self._clock.now_iso(),
+            dry_run,
+            pending_operations=list(migration_plan.pending_operations),
+            planned_steps=list(planned_steps),
+            migration_plan=migration_plan,
         )
         context = {
             "run_id": run_id,
@@ -144,16 +157,27 @@ class ModernizerService:
             "installation": item,
             "replace_existing": replace_existing,
             "restore_widgets": restore_widgets,
+            "installations": self.config.installations,
+            "migration_plan": migration_plan,
         }
-        steps = tuple(OperationStep(name, self._operations) for name in names)
+        steps = tuple(OperationStep(step, self._operations) for step in planned_steps)
         return self._runner.run(manifest, path, steps, context)
 
     def resume(self, installation_id: str, run_id: str, dry_run: bool) -> RunManifest:
         old = self._state.load_manifest(installation_id, run_id)
         path = self._installation(installation_id).destination_path
         self._runner.assert_resume_consistent(old, path)
-        completed = {step.name for step in old.steps if step.status.value == "SUCCEEDED"}
-        remaining = [name for name in UPDATE_STEP_NAMES if name not in completed]
+        completed = {
+            (step.installation_id or installation_id, step.name)
+            for step in old.steps
+            if step.status.value == "SUCCEEDED"
+        }
+        original_steps = old.planned_steps or list(planned_update_steps(installation_id))
+        remaining = [
+            step
+            for step in original_steps
+            if (step.installation_id or installation_id, step.name) not in completed
+        ]
         new = RunManifest(
             self._ids.new(),
             installation_id,
@@ -161,15 +185,20 @@ class ModernizerService:
             RunStatus.RUNNING,
             self._clock.now_iso(),
             dry_run,
+            pending_operations=list(old.pending_operations),
+            planned_steps=remaining,
+            migration_plan=old.migration_plan,
         )
         return self._runner.run(
             new,
             path,
-            [OperationStep(name, self._operations) for name in remaining],
+            [OperationStep(step, self._operations) for step in remaining],
             {
                 "run_id": new.run_id,
                 "installation_id": installation_id,
                 "installation": self._installation(installation_id),
+                "installations": self.config.installations,
+                "migration_plan": old.migration_plan,
                 "resumed_from": run_id,
             },
         )
