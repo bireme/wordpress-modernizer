@@ -1,0 +1,41 @@
+state_directory: ./state
+allowed_app_roots:
+  - /home/apps
+servers:
+  source-example:
+    host: source.example.org
+    port: 22
+    environment: production
+    username_secret: PROD_EXAMPLE_USERNAME
+    authentication: key
+    private_key: /path/to/private/key
+    host_key_policy: strict
+databases:
+  test-db-example:
+    host: db-test.example.invalid
+    port: 3306
+    environment: test
+    username_secret: TEST_DB_EXAMPLE_USERNAME
+    password_secret: TEST_DB_EXAMPLE_PASSWORD
+installations:
+  example-site:
+    source_server: source-example
+    source_environment: production
+    source_path: /home/apps/example.org/wp-main/htdocs
+    destination_path: /home/apps/example.org/wp-main-test/htdocs
+    destination_environment: test
+    allowed_database_endpoints: [test-db-example]
+    database_aliases: []
+    core_checkpoints: []
+database_overrides: {}
+managed_plugins:
+  - slug: example-plugin
+    repository: https://github.com/example/example-plugin.git
+    branch: main
+    strategy: replace_from_git
+    dirty_policy: abort
+observability:
+  json_stdout: true
+  log_file: null
+  otel_enabled: false
+

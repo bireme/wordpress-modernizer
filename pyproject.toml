@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wp-modernizer"
+version = "0.1.0"
+description = "Orquestrador de migração e atualização de ambientes de teste WordPress com preservação em caso de falha"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Seleção de licença pendente de aprovação organizacional"}
+authors = [{name = "Colaboradores do wp-modernizer"}]
+dependencies = ["click>=8.1,<9", "pydantic>=1.10,<3", "PyYAML>=6,<7"]
+
+[project.optional-dependencies]
+otel = ["opentelemetry-api>=1.27", "opentelemetry-sdk>=1.27", "opentelemetry-exporter-otlp>=1.27"]
+dev = [
+  "build>=1.2", "hypothesis>=6.100", "mypy>=1.10", "pytest>=8.0",
+  "pytest-cov>=5.0", "ruff>=0.6", "types-PyYAML>=6.0",
+]
+
+[project.scripts]
+wp-modernizer = "wp_modernizer.cli.main:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wp_modernizer"]
+
+[tool.pytest.ini_options]
+addopts = "-m 'not integration' --strict-markers --strict-config"
+testpaths = ["tests"]
+markers = ["integration: requer infraestrutura externa configurada explicitamente"]
+
+[tool.coverage.run]
+branch = true
+source = ["wp_modernizer"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "C4", "S", "SIM", "RUF"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S108"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+packages = ["wp_modernizer"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = "yaml"
+ignore_missing_imports = true
