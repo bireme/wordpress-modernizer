@@ -93,8 +93,10 @@ class FakeOperations:
     def __init__(self, fail_at: Optional[str] = None) -> None:
         self.fail_at = fail_at
         self.calls: List[str] = []
+        self.contexts: List[Dict[str, Any]] = []
 
     def execute(self, step_name: str, context: Dict[str, Any]) -> StepResult:
         self.calls.append(step_name)
+        self.contexts.append(context)
         status = StepStatus.FAILED if step_name == self.fail_at else StepStatus.SUCCEEDED
         return StepResult(step_name, status, status is StepStatus.SUCCEEDED, step_name)

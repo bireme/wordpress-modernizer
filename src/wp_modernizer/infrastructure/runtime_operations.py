@@ -6,7 +6,7 @@ from typing import Any, ClassVar, Dict, Tuple
 from wp_modernizer.application.ports import CommandRunner
 from wp_modernizer.domain.enums import StepStatus
 from wp_modernizer.domain.errors import UnsafeOperationError
-from wp_modernizer.domain.models import StepResult
+from wp_modernizer.domain.models import PlannedStep, StepResult
 from wp_modernizer.domain.path_parser import InstallationPathParser
 
 
@@ -28,7 +28,11 @@ class RuntimeOperations:
         self._parser = parser
 
     def execute(self, step_name: str, context: Dict[str, Any]) -> StepResult:
-        installation = context["installation"]
+        planned_step = context.get("planned_step")
+        if not isinstance(planned_step, PlannedStep):
+            raise UnsafeOperationError(f"Etapa {step_name} não possui plano de execução")
+        installations = context.get("installations", {})
+        installation = installations.get(planned_step.installation_id, context["installation"])
         path = Path(installation.destination_path)
         if step_name == "backup_existing_test":
             if not path.exists():
@@ -53,12 +57,13 @@ class RuntimeOperations:
                 "o teste existente foi preservado",
             )
         if step_name == "copy_files":
+            excluded = ", ".join(str(path) for path in planned_step.excludes)
             return StepResult(
                 step_name,
                 StepStatus.FAILED,
                 False,
-                "o adaptador de origem SSH/rsync deve ser configurado explicitamente; "
-                "nenhum arquivo foi alterado",
+                "o adaptador de origem SSH/rsync deve ser configurado explicitamente com "
+                f"exclusions [{excluded}]; nenhum arquivo foi alterado",
             )
         if step_name in {"snapshot_source_database", "copy_database", "write_test_db_config"}:
             return StepResult(

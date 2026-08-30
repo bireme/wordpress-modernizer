@@ -104,6 +104,7 @@ class StepResult:
     changed: bool
     message: str
     metrics: Dict[str, float] = field(default_factory=dict)
+    installation_id: Optional[str] = None
 
 
 @dataclass
@@ -126,3 +127,5 @@ class RunManifest:
     widget_diff: List[Dict[str, str]] = field(default_factory=list)
     filesystem_fingerprint: Optional[str] = None
     finished_at: Optional[str] = None
+    planned_steps: List[PlannedStep] = field(default_factory=list)
+    migration_plan: Optional[MigrationPlan] = None
