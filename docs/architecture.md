@@ -7,6 +7,10 @@ importar APIs de processos externos. `application` contém os casos de uso e as 
 `infrastructure` fornece adaptadores de subprocessos, estado local, YAML/ambiente, MySQL,
 SSH/rsync, WP-CLI, sistema de arquivos e Git. `cli` trata apenas da composição.
 
+A composition root em `cli.main.build_service` liga a configuração ao
+`EnvironmentSecretProvider`, cria os adaptadores SSH/MySQL/WP-CLI, injeta-os em
+`RuntimeOperations` pelas portas da aplicação e, por fim, constrói `ModernizerService`.
+
 As dependências apontam para dentro. Objetos falsos implementam os mesmos `Protocol`s e permitem
 testar todas as regras de segurança sem WordPress. Dataclasses modelam valores estáveis do
 domínio; Pydantic valida configurações não confiáveis na fronteira. Isso evita acoplar o domínio

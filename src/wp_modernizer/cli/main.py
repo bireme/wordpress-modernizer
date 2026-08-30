@@ -8,30 +8,60 @@ from typing import Any
 
 import click
 
+from wp_modernizer.application.ports import CommandRunner, SecretProvider
 from wp_modernizer.application.service import ModernizerService
 from wp_modernizer.config.loader import load_config
+from wp_modernizer.config.models import ApplicationConfig
 from wp_modernizer.diagnostics.capability import CapabilityProbe
 from wp_modernizer.domain.enums import Operation, RunStatus
 from wp_modernizer.domain.errors import ModernizerError
 from wp_modernizer.domain.path_parser import InstallationPathParser
 from wp_modernizer.infrastructure.command import SubprocessCommandRunner
 from wp_modernizer.infrastructure.filesystem import LocalFileSystem
+from wp_modernizer.infrastructure.mysql.adapter import MySQLAdapter
 from wp_modernizer.infrastructure.runtime_operations import RuntimeOperations
+from wp_modernizer.infrastructure.secrets import EnvironmentSecretProvider
+from wp_modernizer.infrastructure.ssh.adapter import RSyncSSHAdapter
 from wp_modernizer.infrastructure.state import JsonStateStore
 from wp_modernizer.infrastructure.time import SystemClock, UUIDGenerator
+from wp_modernizer.infrastructure.wpcli.adapter import WPCLIAdapter
+
+
+def build_service(
+    config: ApplicationConfig,
+    *,
+    runner: CommandRunner | None = None,
+    secrets: SecretProvider | None = None,
+) -> ModernizerService:
+    """Composition root da aplicação; dependências opcionais mantêm os testes sem subprocessos."""
+    command_runner = runner or SubprocessCommandRunner()
+    secret_provider = secrets or EnvironmentSecretProvider()
+    filesystem = LocalFileSystem()
+    ssh = RSyncSSHAdapter(config.servers, secret_provider, command_runner)
+    mysql = MySQLAdapter(config.databases, secret_provider, command_runner)
+    wpcli = WPCLIAdapter(command_runner)
+    operations = RuntimeOperations(
+        ssh,
+        mysql,
+        wpcli,
+        InstallationPathParser(config.allowed_app_roots),
+        database_overrides=config.database_overrides,
+    )
+    return ModernizerService(
+        config,
+        CapabilityProbe(command_runner, filesystem),
+        JsonStateStore(config.state_directory),
+        filesystem,
+        SystemClock(),
+        UUIDGenerator(),
+        operations,
+    )
 
 
 class Context:
     def __init__(self, config_path: Path, dry_run: bool) -> None:
         config = load_config(config_path)
-        filesystem = LocalFileSystem()
-        runner = SubprocessCommandRunner()
-        probe = CapabilityProbe(runner, filesystem)
-        state = JsonStateStore(config.state_directory)
-        operations = RuntimeOperations(runner, InstallationPathParser(config.allowed_app_roots))
-        self.service = ModernizerService(
-            config, probe, state, filesystem, SystemClock(), UUIDGenerator(), operations
-        )
+        self.service = build_service(config)
         self.dry_run = dry_run
 
 
