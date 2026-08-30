@@ -84,7 +84,7 @@ def test_ssh_is_key_first_and_password_adapter_is_refused() -> None:
         "s", Path("/source"), Path("/target"), [], "r"
     )
     assert runner.calls[0][0] == "rsync"
-    password = key.copy(update={"authentication": "password", "password_secret": "PASS"})
+    password = key.model_copy(update={"authentication": "password", "password_secret": "PASS"})
     with pytest.raises(ConfigurationError, match="SSH com senha"):
         RSyncSSHAdapter({"s": password}, Secrets(), runner).copy_from(
             "s", Path("/source"), Path("/target"), [], "r"
