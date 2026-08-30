@@ -16,6 +16,6 @@ def load_config(path: Path) -> ApplicationConfig:
     if not isinstance(raw, dict):
         raise ConfigurationError("A raiz da configuração deve ser um mapeamento")
     try:
-        return ApplicationConfig.parse_obj(raw)
+        return ApplicationConfig.model_validate(raw)
     except ValidationError as exc:
         raise ConfigurationError(f"Configuração inválida: {exc}") from exc

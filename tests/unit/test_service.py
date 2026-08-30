@@ -13,7 +13,7 @@ from wp_modernizer.domain.enums import HealthStatus, Operation, RunStatus
 
 
 def config() -> ApplicationConfig:
-    return ApplicationConfig.parse_obj(
+    return ApplicationConfig.model_validate(
         {
             "state_directory": "state",
             "allowed_app_roots": ["/home/apps"],

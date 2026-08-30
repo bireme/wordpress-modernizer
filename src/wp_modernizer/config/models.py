@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from wp_modernizer.domain.enums import Environment
 
@@ -16,13 +16,11 @@ class ServerConfig(BaseModel):
     password_secret: Optional[str] = None
     host_key_policy: Literal["strict", "accept-new"] = "strict"
 
-    @validator("password_secret", always=True)
-    def password_required_for_compatibility(
-        cls, value: Optional[str], values: Dict[str, object]
-    ) -> Optional[str]:
-        if values.get("authentication") == "password" and not value:
+    @model_validator(mode="after")
+    def password_required_for_compatibility(self) -> "ServerConfig":
+        if self.authentication == "password" and not self.password_secret:
             raise ValueError("a autenticação por senha requer password_secret")
-        return value
+        return self
 
 
 class DatabaseConfig(BaseModel):
@@ -45,7 +43,8 @@ class InstallationConfig(BaseModel):
     database_override: Optional[str] = None
     core_checkpoints: List[str] = Field(default_factory=list)
 
-    @validator("destination_environment")
+    @field_validator("destination_environment")
+    @classmethod
     def destination_is_test(cls, value: Environment) -> Environment:
         if value is not Environment.TEST:
             raise ValueError("destination_environment deve ser test")
@@ -76,18 +75,20 @@ class ApplicationConfig(BaseModel):
     managed_plugins: List[ManagedPluginConfig] = Field(default_factory=list)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
 
-    @validator("allowed_app_roots")
+    @field_validator("allowed_app_roots")
+    @classmethod
     def roots_are_absolute(cls, value: List[Path]) -> List[Path]:
         if not value or any(not item.is_absolute() for item in value):
             raise ValueError("allowed_app_roots deve conter caminhos absolutos")
         return value
 
-    @validator("installations")
+    @field_validator("installations")
+    @classmethod
     def validate_installation_references(
-        cls, value: Dict[str, InstallationConfig], values: Dict[str, object]
+        cls, value: Dict[str, InstallationConfig], info: ValidationInfo
     ) -> Dict[str, InstallationConfig]:
-        raw_servers = values.get("servers", {})
-        raw_databases = values.get("databases", {})
+        raw_servers = info.data.get("servers", {})
+        raw_databases = info.data.get("databases", {})
         servers = raw_servers if isinstance(raw_servers, dict) else {}
         databases = raw_databases if isinstance(raw_databases, dict) else {}
         for key, item in value.items():
