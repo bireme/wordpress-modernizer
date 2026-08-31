@@ -129,3 +129,8 @@ class RunManifest:
     finished_at: Optional[str] = None
     planned_steps: List[PlannedStep] = field(default_factory=list)
     migration_plan: Optional[MigrationPlan] = None
+    execution_parameters: Optional[Dict[str, bool]] = None
+    recovery_data: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    original_run_id: Optional[str] = None
+    resumed_from_run_id: Optional[str] = None
+    resume_source_failed_step: Optional[str] = None

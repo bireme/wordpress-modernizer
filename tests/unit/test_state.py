@@ -37,6 +37,16 @@ def test_migration_plan_round_trip_preserves_step_metadata(tmp_path: Path) -> No
         False,
         planned_steps=list(plan.steps),
         migration_plan=plan,
+        execution_parameters={"replace_existing": True, "restore_widgets": False},
+        recovery_data={
+            "parent": {
+                "source_endpoint": "production",
+                "source_database": "wordpress",
+                "target_endpoint": "test",
+                "target_database": "wordpress_test",
+            }
+        },
+        original_run_id="run-id",
     )
     store = JsonStateStore(tmp_path)
 
@@ -45,6 +55,9 @@ def test_migration_plan_round_trip_preserves_step_metadata(tmp_path: Path) -> No
 
     assert loaded.migration_plan == plan
     assert loaded.planned_steps == list(plan.steps)
+    assert loaded.execution_parameters == manifest.execution_parameters
+    assert loaded.recovery_data == manifest.recovery_data
+    assert loaded.original_run_id == "run-id"
     parent_copy = next(
         step
         for step in loaded.planned_steps

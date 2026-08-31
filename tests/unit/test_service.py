@@ -1,3 +1,5 @@
+import pytest
+
 from tests.fakes.core import (
     FakeClock,
     FakeFileSystem,
@@ -10,7 +12,8 @@ from tests.fakes.core import (
 from wp_modernizer.application.service import ModernizerService
 from wp_modernizer.config.models import ApplicationConfig
 from wp_modernizer.domain.enums import HealthStatus, Operation, RunStatus
-from wp_modernizer.domain.models import PlannedStep
+from wp_modernizer.domain.errors import ResumeConsistencyError
+from wp_modernizer.domain.models import PlannedStep, RunManifest
 
 
 def config() -> ApplicationConfig:
@@ -142,4 +145,86 @@ def test_resume_skips_successful_steps() -> None:
     app = service(state=state)
     old = app.execute(Operation.UPDATE, "parent", dry_run=False)
     result = app.resume("parent", old.run_id, dry_run=True)
-    assert result.steps == []
+    assert result.steps == old.steps
+    assert result.operation is Operation.UPDATE
+    assert result.planned_steps == old.planned_steps
+
+
+@pytest.mark.parametrize(
+    ("operation", "failed_step"),
+    [
+        (Operation.MIGRATE, "snapshot_source_database"),
+        (Operation.UPDATE, "core_update"),
+        (Operation.PIPELINE, "core_update"),
+    ],
+)
+def test_interrupted_operation_resumes_the_same_original_plan(
+    operation: Operation, failed_step: str
+) -> None:
+    state = FakeStateStore()
+    operations = FakeOperations(fail_at=failed_step)
+    app = service(operations=operations, state=state)
+    old = app.execute(
+        operation,
+        "parent",
+        dry_run=False,
+        replace_existing=True,
+        restore_widgets=True,
+    )
+    assert old.status is RunStatus.UPDATE_FAILED_PRESERVED
+    completed_calls = list(operations.calls[:-1])
+    operations.calls.clear()
+    operations.contexts.clear()
+    operations.fail_at = None
+
+    resumed = app.resume("parent", old.run_id, dry_run=False)
+
+    assert resumed.status is RunStatus.SUCCEEDED
+    assert resumed.operation is operation
+    assert resumed.planned_steps == old.planned_steps
+    assert resumed.execution_parameters == old.execution_parameters
+    assert resumed.resume_source_failed_step == failed_step
+    assert operations.calls[0] == failed_step
+    assert not set(completed_calls).intersection(operations.calls[:1])
+    assert operations.contexts[0]["replace_existing"] is True
+    assert operations.contexts[0]["restore_widgets"] is True
+
+
+def test_resume_after_copy_files_does_not_copy_files_again() -> None:
+    state = FakeStateStore()
+    operations = FakeOperations(fail_at="snapshot_source_database")
+    app = service(operations=operations, state=state)
+    old = app.execute(Operation.MIGRATE, "parent", dry_run=False)
+    assert "copy_files" in operations.calls
+    operations.calls.clear()
+    operations.contexts.clear()
+    operations.fail_at = None
+
+    app.resume("parent", old.run_id, dry_run=False)
+
+    # A child installation can still have its own pending copy, but the completed parent copy
+    # is never replayed. The resumed call starts exactly at the failed parent snapshot.
+    assert operations.calls[0] == "snapshot_source_database"
+    parent_copy_contexts = [
+        context
+        for name, context in zip(operations.calls, operations.contexts, strict=True)
+        if name == "copy_files" and context["planned_step"].installation_id == "parent"
+    ]
+    assert parent_copy_contexts == []
+
+
+def test_old_incomplete_manifest_is_rejected_instead_of_becoming_update() -> None:
+    state = FakeStateStore()
+    old = RunManifest(
+        "legacy",
+        "parent",
+        Operation.MIGRATE,
+        RunStatus.UPDATE_FAILED_PRESERVED,
+        "now",
+        False,
+        failed_step="copy_files",
+    )
+    state.manifests[("parent", "legacy")] = old
+
+    with pytest.raises(ResumeConsistencyError, match=r"informação suficiente.*resume seguro"):
+        service(state=state).resume("parent", "legacy", dry_run=False)
