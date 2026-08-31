@@ -53,6 +53,10 @@ class DatabasePort(DatabaseRegistry, Protocol):
 
 
 class WordPressPort(Protocol):
+    def get_site_url(self, path: Path, run_id: str) -> str: ...
+
+    def is_multisite(self, path: Path, run_id: str) -> bool: ...
+
     def get_config(self, path: Path, name: str, run_id: str) -> str: ...
 
     def search_replace(
@@ -64,7 +68,7 @@ class WordPressPort(Protocol):
         dry_run: bool,
         multisite: bool,
         run_id: str,
-    ) -> str: ...
+    ) -> int: ...
 
     def set_config(self, path: Path, values: Mapping[str, str], run_id: str) -> None: ...
 

@@ -1,25 +1,34 @@
+import re
 from dataclasses import dataclass
-from typing import Dict, Iterable, Protocol, Sequence, Set, Tuple
+from typing import Iterable, Protocol, Sequence, Set, Tuple
 
-from .enums import DatabaseLocationStatus
-from .errors import AmbiguousDatabaseError, DatabaseNotFoundError
+from .enums import DatabaseLocationStatus, Environment
+from .errors import AmbiguousDatabaseError, DatabaseNotFoundError, UnsafeOperationError
 
 
 class DatabaseNamingStrategy(Protocol):
     def candidates(self, source_name: str, aliases: Sequence[str]) -> Tuple[str, ...]: ...
 
 
-class SuffixDatabaseNamingStrategy:
-    def __init__(self, test_suffix: str = "test") -> None:
-        self._suffix = test_suffix
+class ProductionTestDatabaseNamingStrategy:
+    """Aplica somente a convenção exata wp_<name>_prod -> wp_<name>_tst."""
+
+    _production_pattern = re.compile(r"^wp_(?P<name>[A-Za-z0-9_]+)_prod$")
 
     def candidates(self, source_name: str, aliases: Sequence[str]) -> Tuple[str, ...]:
-        base = source_name.rsplit("_", 1)[0] if "_" in source_name else source_name
-        values = [f"{base}_{self._suffix}", *aliases]
-        return tuple(dict.fromkeys(value for value in values if value))
+        match = self._production_pattern.fullmatch(source_name)
+        conventional = (f"wp_{match.group('name')}_tst",) if match else ()
+        # Aliases são nomes completos e exatos, nunca aproximações do nome de produção.
+        return tuple(dict.fromkeys((*conventional, *(alias for alias in aliases if alias))))
+
+
+class DatabaseEndpoint(Protocol):
+    environment: Environment
 
 
 class SchemaReader(Protocol):
+    def get_database(self, endpoint_id: str) -> DatabaseEndpoint: ...
+
     def list_schemas(self, endpoint_id: str) -> Set[str]: ...
 
 
@@ -40,26 +49,45 @@ class DatabaseLocator:
         source_name: str,
         aliases: Sequence[str],
         endpoint_ids: Iterable[str],
-        overrides: Dict[str, str],
-        installation_id: str,
+        *,
+        override: str | None = None,
     ) -> DatabaseLocation:
-        candidates = (
-            (overrides[installation_id],)
-            if installation_id in overrides
-            else self._naming.candidates(source_name, aliases)
-        )
-        matches = [
-            (endpoint, candidate)
-            for endpoint in endpoint_ids
-            for candidate in candidates
-            if candidate in self._reader.list_schemas(endpoint)
-        ]
-        if not matches:
+        endpoints = tuple(endpoint_ids)
+        for endpoint_id in endpoints:
+            if self._reader.get_database(endpoint_id).environment is not Environment.TEST:
+                raise UnsafeOperationError(
+                    f"O endpoint {endpoint_id} não é de TESTE e não pode ser destino"
+                )
+
+        candidates = (override,) if override else self._naming.candidates(source_name, aliases)
+        if not candidates:
             raise DatabaseNotFoundError(
-                f"Nenhum endpoint de banco permitido contém um banco esperado: {candidates}"
+                f"O banco de produção {source_name!r} não segue wp_<name>_prod e não possui "
+                "database_override nem alias exato; configure o destino provisionado pela "
+                "infraestrutura"
+            )
+
+        schemas = {endpoint_id: self._reader.list_schemas(endpoint_id) for endpoint_id in endpoints}
+        matches = sorted(
+            {
+                (endpoint_id, candidate)
+                for endpoint_id, available in schemas.items()
+                for candidate in candidates
+                if candidate in available
+            }
+        )
+        if not matches:
+            if override:
+                raise DatabaseNotFoundError(
+                    f"O database_override {override!r} não existe nos endpoints de TESTE "
+                    "autorizados; a infraestrutura precisa provisionar ou corrigir a configuração"
+                )
+            raise DatabaseNotFoundError(
+                f"Nenhum candidato exato {candidates!r} existe nos endpoints de TESTE "
+                "autorizados; a infraestrutura precisa provisionar ou configurar o banco"
             )
         if len(matches) > 1:
-            endpoints = ", ".join(f"{endpoint}:{name}" for endpoint, name in matches)
-            raise AmbiguousDatabaseError(f"AMBIGUOUS_DATABASE: {endpoints}")
+            locations = ", ".join(f"{endpoint}:{name}" for endpoint, name in matches)
+            raise AmbiguousDatabaseError(f"AMBIGUOUS_DATABASE: {locations}")
         endpoint, name = matches[0]
         return DatabaseLocation(DatabaseLocationStatus.FOUND, endpoint, name)
