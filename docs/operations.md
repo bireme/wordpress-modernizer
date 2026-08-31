@@ -16,7 +16,10 @@ adaptador. Uma simulação ainda sonda capacidades e grava seu manifesto externo
 que o trabalho proposto possa ser auditado. Intencionalmente, não existe comando de publicação
 em produção.
 
-O adaptador público de execução é conservador: a migração real permanece desabilitada até que a
-implantação forneça e teste por contrato a origem SSH, a descoberta do banco de origem, a
-retenção de cópias de segurança e o gravador protegido de `wp-config`. Ele falha antes de alterar
-o estado quando a infraestrutura não está definida.
+O adaptador público de execução delega cópias à porta de transporte remoto. Um roteador usa
+SSH/rsync para autenticação por chave e SSH/SFTP (Paramiko) para autenticação por senha. A
+descoberta e transferência de bancos é delegada
+ao MySQL e operações WordPress ao WP-CLI. Uma migração de banco exige endpoints de origem e de
+TESTE permitidos e resolução não ambígua. Credenciais do `wp-config` são entregues ao WP-CLI por
+entrada padrão, e não por `argv`. A retenção de uma cópia de teste já existente continua falhando
+antes de alterar estado até que um adaptador específico seja configurado.

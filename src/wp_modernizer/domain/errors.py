@@ -18,6 +18,26 @@ class AuthenticationError(InfrastructureError):
     pass
 
 
+class PasswordAuthenticationError(AuthenticationError):
+    """A autenticação por senha foi recusada sem divulgar a credencial."""
+
+
+class AuthenticationRefusedError(AuthenticationError):
+    """O servidor não permite o método de autenticação solicitado."""
+
+
+class HostKeyVerificationError(InfrastructureError):
+    """A identidade SSH do host não pertence ao conjunto confiável."""
+
+
+class RemoteHostUnreachableError(InfrastructureError):
+    """Não foi possível alcançar o endpoint remoto."""
+
+
+class TransferError(InfrastructureError):
+    """A sessão autenticou, mas a transferência falhou."""
+
+
 class DiagnosticError(ModernizerError):
     pass
 
