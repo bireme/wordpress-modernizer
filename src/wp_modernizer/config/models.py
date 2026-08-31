@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Literal, Mapping, Optional
 
 from pydantic import AnyHttpUrl, BaseModel, Field, ValidationInfo, field_validator, model_validator
 
@@ -33,7 +33,16 @@ class DatabaseConfig(BaseModel):
     environment: Environment = Environment.TEST
     username_secret: str
     password_secret: str
-    allow_create: Literal[False] = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_removed_allow_create(cls, value: object) -> object:
+        if isinstance(value, Mapping) and "allow_create" in value:
+            raise ValueError(
+                "allow_create foi removido: o wp-modernizer nunca cria bancos; remova a chave "
+                "e solicite à infraestrutura o provisionamento prévio do schema de TESTE"
+            )
+        return value
 
 
 class InstallationConfig(BaseModel):
