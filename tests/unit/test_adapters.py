@@ -20,6 +20,7 @@ from wp_modernizer.domain.errors import (
     AuthenticationRefusedError,
     CommandTimeoutError,
     ConfigurationError,
+    DatabaseNotFoundError,
     HostKeyVerificationError,
     InfrastructureError,
     PasswordAuthenticationError,
@@ -194,6 +195,26 @@ def test_mysql_never_imports_into_production() -> None:
             "db", "site", Path("/tmp/dump.sql"), "r"
         )
     assert runner.calls == []
+
+
+def test_mysql_import_requires_preexisting_test_schema() -> None:
+    runner = FakeCommandRunner([FakeCommandResult(stdout="another_schema\n")])
+    with pytest.raises(DatabaseNotFoundError, match="infraestrutura deve provisioná-lo"):
+        MySQLAdapter({"db": database()}, Secrets(), runner).import_dump(
+            "db", "wp_portal_tst", Path("/tmp/dump.sql"), "r"
+        )
+    assert len(runner.calls) == 1
+    assert any("INFORMATION_SCHEMA.SCHEMATA" in argument for argument in runner.calls[0])
+
+
+def test_mysql_imports_only_after_test_schema_is_confirmed() -> None:
+    runner = FakeCommandRunner([FakeCommandResult(stdout="wp_portal_tst\n"), FakeCommandResult()])
+    MySQLAdapter({"db": database()}, Secrets(), runner).import_dump(
+        "db", "wp_portal_tst", Path("/tmp/dump.sql"), "r"
+    )
+    assert len(runner.calls) == 2
+    assert "--execute" in runner.calls[0]
+    assert runner.calls[1][-1] == "wp_portal_tst"
 
 
 def test_mysql_widget_snapshot_preserves_binary_and_rejects_bad_table() -> None:

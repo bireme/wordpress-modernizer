@@ -8,7 +8,7 @@ implementar `SecretProvider`.
 Cada instalação informa um servidor de origem, um ambiente de origem (`production` ou `test`),
 um caminho absoluto de origem, um destino de TESTE absoluto e IDs permitidos de endpoints de
 banco de dados de teste. Apelidos e substituições exatas de bancos são explícitos. Por padrão,
-não é permitida a criação de bancos inexistentes. `allow_create: true` é rejeitado pela validação.
+o modernizer opera somente sobre schemas previamente provisionados pela infraestrutura.
 
 ## Bancos de dados
 
@@ -23,6 +23,9 @@ comparados de forma exata; eles são considerados junto ao candidato convenciona
 dois nomes existentes causam erro de ambiguidade. O mapa global `database_overrides` continua
 aceito por compatibilidade, com precedência menor que o override da instalação. Ausência ou
 ambiguidade sempre interrompe a operação para provisionamento/correção pela infraestrutura.
+Não existe opção pública nem comando para criação de banco. Configurações antigas contendo
+`allow_create`, com qualquer valor, são recusadas com uma orientação explícita de migração:
+remover a chave e solicitar o provisionamento do schema de TESTE.
 
 `organizational_domain` declara a fronteira DNS usada pela convenção de URLs de TESTE. Para
 `bireme.org`, a URL de produção `https://boletin.bireme.org` resulta em

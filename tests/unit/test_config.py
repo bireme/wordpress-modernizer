@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from wp_modernizer.config.models import ApplicationConfig, ServerConfig
+from wp_modernizer.config.models import ApplicationConfig, DatabaseConfig, ServerConfig
 
 
 def valid_config():
@@ -76,11 +76,21 @@ def test_config_rejects_invalid_test_url() -> None:
         ApplicationConfig.model_validate(raw)
 
 
-def test_config_never_allows_database_creation() -> None:
+@pytest.mark.parametrize("legacy_value", [False, True])
+def test_config_rejects_removed_allow_create_with_migration_message(
+    legacy_value: bool,
+) -> None:
     raw = valid_config()
-    raw["databases"]["d"]["allow_create"] = True
-    with pytest.raises(ValidationError, match="allow_create"):
+    raw["databases"]["d"]["allow_create"] = legacy_value
+    with pytest.raises(
+        ValidationError,
+        match=r"allow_create foi removido.*infraestrutura.*provisionamento prévio",
+    ):
         ApplicationConfig.model_validate(raw)
+
+
+def test_allow_create_is_not_part_of_public_database_schema() -> None:
+    assert "allow_create" not in DatabaseConfig.model_json_schema()["properties"]
 
 
 @pytest.mark.parametrize("field", ["database_override", "database_aliases"])

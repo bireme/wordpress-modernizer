@@ -14,6 +14,7 @@ servers:
     # Opcional: arquivo adicional no formato OpenSSH. Sem esta opção, usa ~/.ssh/known_hosts.
     # known_hosts_file: /etc/wp-modernizer/known_hosts
 databases:
+  # Todos os schemas devem ser provisionados previamente pela infraestrutura.
   test-db-example:
     host: db-test.example.invalid
     port: 3306
