@@ -95,12 +95,28 @@ class RuntimeOperations:
 
         if step_name == "snapshot_source_database":
             return self._snapshot_source_database(
-                step_name, planned_step.installation_id, installation, path, run_id
+                step_name,
+                planned_step.installation_id,
+                installation,
+                path,
+                run_id,
+                context.get("recovery_data", {}),
             )
         if step_name == "copy_database":
-            return self._copy_database(step_name, planned_step.installation_id, run_id)
+            return self._copy_database(
+                step_name,
+                planned_step.installation_id,
+                run_id,
+                context.get("recovery_data", {}),
+            )
         if step_name == "write_test_db_config":
-            return self._write_test_db_config(step_name, planned_step.installation_id, path, run_id)
+            return self._write_test_db_config(
+                step_name,
+                planned_step.installation_id,
+                path,
+                run_id,
+                context.get("recovery_data", {}),
+            )
 
         if step_name in {"preflight", "snapshot", "widget_validation", "final_health_check"}:
             return self._ok(step_name, False, "ponto de controle de diagnóstico concluído")
@@ -121,6 +137,7 @@ class RuntimeOperations:
         installation: Any,
         path: Path,
         run_id: str,
+        recovery_data: Dict[str, Dict[str, str]],
     ) -> StepResult:
         source_name = installation.database_override or self._wordpress.get_config(
             path, "DB_NAME", run_id
@@ -155,11 +172,18 @@ class RuntimeOperations:
             "target_endpoint": target.endpoint_id,
             "target_database": target.database_name,
         }
+        recovery_data[installation_id] = dict(self._database_runs[(run_id, installation_id)])
         return self._ok(step_name, False, "origem e destino MySQL resolvidos sem ambiguidade")
 
-    def _copy_database(self, step_name: str, installation_id: str, run_id: str) -> StepResult:
+    def _copy_database(
+        self,
+        step_name: str,
+        installation_id: str,
+        run_id: str,
+        recovery_data: Dict[str, Dict[str, str]],
+    ) -> StepResult:
         key = (run_id, installation_id)
-        state = self._database_runs.get(key)
+        state = self._database_runs.get(key) or recovery_data.get(installation_id)
         if not state:
             return self._failed(step_name, "não há instantâneo MySQL desta execução para importar")
         with tempfile.NamedTemporaryFile(
@@ -178,10 +202,15 @@ class RuntimeOperations:
         return self._ok(step_name, True, "banco importado pelo adapter MySQL no ambiente de teste")
 
     def _write_test_db_config(
-        self, step_name: str, installation_id: str, path: Path, run_id: str
+        self,
+        step_name: str,
+        installation_id: str,
+        path: Path,
+        run_id: str,
+        recovery_data: Dict[str, Dict[str, str]],
     ) -> StepResult:
         key = (run_id, installation_id)
-        state = self._database_runs.get(key)
+        state = self._database_runs.get(key) or recovery_data.get(installation_id)
         if not state:
             return self._failed(step_name, "o destino MySQL desta execução não foi resolvido")
         values = self._databases.wordpress_configuration(
@@ -189,6 +218,7 @@ class RuntimeOperations:
         )
         self._wordpress.set_config(path, values, run_id)
         self._database_runs.pop(key, None)
+        recovery_data.pop(installation_id, None)
         return self._ok(step_name, True, "wp-config aponta para o banco do ambiente de teste")
 
     def _search_replace(

@@ -13,9 +13,19 @@ from wp_modernizer.application.ports import (
     StateStore,
 )
 from wp_modernizer.config.models import ApplicationConfig
-from wp_modernizer.domain.enums import Environment, Operation, PendingOperationType, RunStatus
-from wp_modernizer.domain.errors import ConfigurationError, UnsafeOperationError
-from wp_modernizer.domain.models import MigrationPlan, PendingOperation, RunManifest
+from wp_modernizer.domain.enums import (
+    Environment,
+    Operation,
+    PendingOperationType,
+    RunStatus,
+    StepStatus,
+)
+from wp_modernizer.domain.errors import (
+    ConfigurationError,
+    ResumeConsistencyError,
+    UnsafeOperationError,
+)
+from wp_modernizer.domain.models import MigrationPlan, PendingOperation, PlannedStep, RunManifest
 from wp_modernizer.domain.path_parser import InstallationPathParser
 from wp_modernizer.domain.planning import MigrationPlanner
 from wp_modernizer.pipeline.runner import PipelineRunner
@@ -150,6 +160,12 @@ class ModernizerService:
             pending_operations=list(migration_plan.pending_operations),
             planned_steps=list(planned_steps),
             migration_plan=migration_plan,
+            execution_parameters={
+                "replace_existing": replace_existing,
+                "restore_widgets": restore_widgets,
+            },
+            recovery_data={},
+            original_run_id=run_id,
         )
         context = {
             "run_id": run_id,
@@ -159,35 +175,39 @@ class ModernizerService:
             "restore_widgets": restore_widgets,
             "installations": self.config.installations,
             "migration_plan": migration_plan,
+            "recovery_data": manifest.recovery_data,
         }
         steps = tuple(OperationStep(step, self._operations) for step in planned_steps)
         return self._runner.run(manifest, path, steps, context)
 
     def resume(self, installation_id: str, run_id: str, dry_run: bool) -> RunManifest:
         old = self._state.load_manifest(installation_id, run_id)
+        original_steps = self._safe_resume_plan(old)
         path = self._installation(installation_id).destination_path
         self._runner.assert_resume_consistent(old, path)
-        completed = {
-            (step.installation_id or installation_id, step.name)
-            for step in old.steps
-            if step.status.value == "SUCCEEDED"
-        }
-        original_steps = old.planned_steps or list(planned_update_steps(installation_id))
-        remaining = [
-            step
-            for step in original_steps
-            if (step.installation_id or installation_id, step.name) not in completed
-        ]
+        completed_count = self._completed_prefix(old, original_steps)
+        remaining = original_steps[completed_count:]
+        parameters = dict(old.execution_parameters or {})
         new = RunManifest(
             self._ids.new(),
             installation_id,
-            Operation.RESUME,
+            old.operation,
             RunStatus.RUNNING,
             self._clock.now_iso(),
             dry_run,
+            steps=list(old.steps[:completed_count]),
             pending_operations=list(old.pending_operations),
-            planned_steps=remaining,
+            last_successful_step=(
+                old.steps[completed_count - 1].name if completed_count else None
+            ),
+            widget_diff=list(old.widget_diff),
+            planned_steps=list(original_steps),
             migration_plan=old.migration_plan,
+            execution_parameters=parameters,
+            recovery_data={key: dict(value) for key, value in old.recovery_data.items()},
+            original_run_id=old.original_run_id or old.run_id,
+            resumed_from_run_id=old.run_id,
+            resume_source_failed_step=old.failed_step,
         )
         return self._runner.run(
             new,
@@ -199,9 +219,62 @@ class ModernizerService:
                 "installation": self._installation(installation_id),
                 "installations": self.config.installations,
                 "migration_plan": old.migration_plan,
+                "replace_existing": parameters["replace_existing"],
+                "restore_widgets": parameters["restore_widgets"],
+                "recovery_data": new.recovery_data,
                 "resumed_from": run_id,
             },
         )
+
+    @staticmethod
+    def _safe_resume_plan(old: RunManifest) -> list[PlannedStep]:
+        executable = {Operation.MIGRATE, Operation.UPDATE, Operation.PIPELINE}
+        missing = []
+        if old.operation not in executable:
+            missing.append("operação original")
+        if not old.planned_steps:
+            missing.append("plano original ordenado")
+        if old.execution_parameters is None or not {
+            "replace_existing",
+            "restore_widgets",
+        }.issubset(old.execution_parameters):
+            missing.append("parâmetros de execução")
+        if old.migration_plan is None:
+            missing.append("plano de migração e operações pendentes")
+        if missing:
+            detail = ", ".join(missing)
+            raise ResumeConsistencyError(
+                "Este manifest não contém informação suficiente para um resume seguro: "
+                f"{detail}. Execute novamente a operação original."
+            )
+        return list(old.planned_steps)
+
+    @staticmethod
+    def _completed_prefix(old: RunManifest, planned_steps: list[PlannedStep]) -> int:
+        if len(old.steps) > len(planned_steps):
+            raise ResumeConsistencyError(
+                "O histórico de steps não corresponde ao plano original; resume seguro recusado"
+            )
+        completed = 0
+        encountered_incomplete = False
+        for index, result in enumerate(old.steps):
+            planned = planned_steps[index]
+            identity = (result.installation_id or old.installation_id, result.name)
+            expected = (planned.installation_id or old.installation_id, planned.name)
+            if identity != expected:
+                raise ResumeConsistencyError(
+                    "O histórico de steps não corresponde ao plano original; "
+                    "resume seguro recusado"
+                )
+            if result.status is StepStatus.SUCCEEDED:
+                if encountered_incomplete:
+                    raise ResumeConsistencyError(
+                        "O histórico possui steps concluídos fora de ordem; resume seguro recusado"
+                    )
+                completed += 1
+            else:
+                encountered_incomplete = True
+        return completed
 
     def _installation(self, installation_id: str) -> Any:
         try:

@@ -82,6 +82,11 @@ class JsonStateStore:
                 self._deserialize_planned_step(item) for item in raw.get("planned_steps", [])
             ],
             migration_plan=self._deserialize_migration_plan(raw.get("migration_plan")),
+            execution_parameters=raw.get("execution_parameters"),
+            recovery_data=raw.get("recovery_data", {}),
+            original_run_id=raw.get("original_run_id"),
+            resumed_from_run_id=raw.get("resumed_from_run_id"),
+            resume_source_failed_step=raw.get("resume_source_failed_step"),
         )
 
     @staticmethod
