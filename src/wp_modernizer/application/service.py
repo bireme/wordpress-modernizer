@@ -197,9 +197,7 @@ class ModernizerService:
             dry_run,
             steps=list(old.steps[:completed_count]),
             pending_operations=list(old.pending_operations),
-            last_successful_step=(
-                old.steps[completed_count - 1].name if completed_count else None
-            ),
+            last_successful_step=(old.steps[completed_count - 1].name if completed_count else None),
             widget_diff=list(old.widget_diff),
             planned_steps=list(original_steps),
             migration_plan=old.migration_plan,
@@ -263,8 +261,7 @@ class ModernizerService:
             expected = (planned.installation_id or old.installation_id, planned.name)
             if identity != expected:
                 raise ResumeConsistencyError(
-                    "O histórico de steps não corresponde ao plano original; "
-                    "resume seguro recusado"
+                    "O histórico de steps não corresponde ao plano original; resume seguro recusado"
                 )
             if result.status is StepStatus.SUCCEEDED:
                 if encountered_incomplete:

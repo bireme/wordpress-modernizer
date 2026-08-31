@@ -7,7 +7,7 @@ from typing import Any, ClassVar, Dict, Tuple
 from wp_modernizer.application.ports import DatabasePort, FileTransferPort, WordPressPort
 from wp_modernizer.domain.database import DatabaseLocator, SuffixDatabaseNamingStrategy
 from wp_modernizer.domain.enums import Environment, PendingOperationType, StepStatus
-from wp_modernizer.domain.errors import UnsafeOperationError
+from wp_modernizer.domain.errors import InfrastructureError, UnsafeOperationError
 from wp_modernizer.domain.models import PlannedStep, StepResult
 from wp_modernizer.domain.path_parser import InstallationPathParser
 
@@ -78,18 +78,21 @@ class RuntimeOperations:
             server = self._files.get_server(installation.source_server)
             if server.environment is not installation.source_environment:
                 raise UnsafeOperationError("O ambiente do servidor não coincide com o da origem")
-            elapsed = self._files.copy_from(
-                installation.source_server,
-                Path(installation.source_path),
-                path.parent,
-                planned_step.excludes,
-                run_id,
-            )
+            try:
+                elapsed = self._files.copy_from(
+                    installation.source_server,
+                    Path(installation.source_path),
+                    path.parent,
+                    planned_step.excludes,
+                    run_id,
+                )
+            except InfrastructureError as exc:
+                return self._failed(step_name, str(exc))
             return StepResult(
                 step_name,
                 StepStatus.SUCCEEDED,
                 True,
-                "arquivos copiados pelo adaptador SSH/rsync",
+                "arquivos copiados pelo transporte SSH configurado",
                 {"duration_seconds": float(elapsed)},
             )
 

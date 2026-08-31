@@ -43,7 +43,9 @@ class MigrationPlanner:
                     mutable=True,
                     idempotent=True,
                     completion_probe="os manifestos de cópia da origem e do destino coincidem",
-                    partial_recovery="o rsync retoma; raízes aninhadas permanecem excluídas",
+                    partial_recovery=(
+                        "repetir a cópia idempotente; raízes aninhadas permanecem excluídas"
+                    ),
                     installation_id=node.installation_id,
                     excludes=(*descendants, Path("*.sql"), Path(".wp-modernizer")),
                 )
