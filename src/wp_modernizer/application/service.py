@@ -126,7 +126,9 @@ class ModernizerService:
             installation_id,
             item.source_environment,
             item.source_server,
-            item.database_override or "resolved-at-runtime",
+            item.database_override
+            or self.config.database_overrides.get(installation_id)
+            or "resolved-at-runtime",
             installations,
             pending,
         )

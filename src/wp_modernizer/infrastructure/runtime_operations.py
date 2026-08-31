@@ -6,10 +6,12 @@ from pathlib import Path
 from typing import Any, ClassVar, Dict, Tuple
 
 from wp_modernizer.application.ports import DatabasePort, FileTransferPort, WordPressPort
-from wp_modernizer.domain.database import DatabaseLocator, SuffixDatabaseNamingStrategy
+from wp_modernizer.domain.database import DatabaseLocator, ProductionTestDatabaseNamingStrategy
 from wp_modernizer.domain.enums import Environment, PendingOperationType, StepStatus
 from wp_modernizer.domain.errors import (
+    AmbiguousDatabaseError,
     ConfigurationError,
+    DatabaseNotFoundError,
     InfrastructureError,
     UnsafeOperationError,
     WordPressUnavailableError,
@@ -149,9 +151,7 @@ class RuntimeOperations:
         run_id: str,
         recovery_data: Dict[str, Dict[str, str]],
     ) -> StepResult:
-        source_name = installation.database_override or self._wordpress.get_config(
-            path, "DB_NAME", run_id
-        )
+        source_name = self._wordpress.get_config(path, "DB_NAME", run_id)
         source_endpoints = [
             endpoint_id
             for endpoint_id in installation.allowed_database_endpoints
@@ -169,13 +169,18 @@ class RuntimeOperations:
             for endpoint_id in installation.allowed_database_endpoints
             if self._databases.get_database(endpoint_id).environment is Environment.TEST
         ]
-        target = DatabaseLocator(self._databases, SuffixDatabaseNamingStrategy("test")).locate(
-            source_name,
-            installation.database_aliases,
-            target_endpoints,
-            self._database_overrides,
-            installation_id,
-        )
+        override = installation.database_override or self._database_overrides.get(installation_id)
+        try:
+            target = DatabaseLocator(
+                self._databases, ProductionTestDatabaseNamingStrategy()
+            ).locate(
+                source_name,
+                installation.database_aliases,
+                target_endpoints,
+                override=override,
+            )
+        except (AmbiguousDatabaseError, DatabaseNotFoundError) as exc:
+            return self._failed(step_name, str(exc))
         self._database_runs[(run_id, installation_id)] = {
             "source_endpoint": source_endpoints[0],
             "source_database": source_name,

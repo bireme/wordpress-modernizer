@@ -8,7 +8,21 @@ implementar `SecretProvider`.
 Cada instalação informa um servidor de origem, um ambiente de origem (`production` ou `test`),
 um caminho absoluto de origem, um destino de TESTE absoluto e IDs permitidos de endpoints de
 banco de dados de teste. Apelidos e substituições exatas de bancos são explícitos. Por padrão,
-não é permitida a criação de bancos inexistentes.
+não é permitida a criação de bancos inexistentes. `allow_create: true` é rejeitado pela validação.
+
+## Bancos de dados
+
+O nome da origem é sempre descoberto de `DB_NAME`. Quando ele segue exatamente
+`wp_<name>_prod`, o candidato automático é `wp_<name>_tst`. A busca usa igualdade exata e ocorre
+somente nos schemas dos endpoints autorizados cujo `environment` é `test`; não existe busca por
+similaridade.
+
+`database_override` dentro da instalação tem precedência absoluta e deve conter o nome completo
+de um schema já provisionado. `database_aliases` contém nomes completos alternativos, também
+comparados de forma exata; eles são considerados junto ao candidato convencional e, portanto,
+dois nomes existentes causam erro de ambiguidade. O mapa global `database_overrides` continua
+aceito por compatibilidade, com precedência menor que o override da instalação. Ausência ou
+ambiguidade sempre interrompe a operação para provisionamento/correção pela infraestrutura.
 
 `organizational_domain` declara a fronteira DNS usada pela convenção de URLs de TESTE. Para
 `bireme.org`, a URL de produção `https://boletin.bireme.org` resulta em
