@@ -9,7 +9,7 @@ import pytest
 
 from tests.fakes.core import FakeCommandResult, FakeCommandRunner
 from wp_modernizer.config.models import DatabaseConfig, ServerConfig
-from wp_modernizer.domain.enums import Environment
+from wp_modernizer.domain.enums import DatabaseAvailabilityStatus, Environment
 from wp_modernizer.domain.errors import (
     AuthenticationError,
     AuthenticationRefusedError,
@@ -140,6 +140,43 @@ def test_mysql_schema_discovery_and_authentication_error() -> None:
     )
     with pytest.raises(AuthenticationError):
         denied.list_schemas("db")
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        (FakeCommandResult(stdout="1\n"), DatabaseAvailabilityStatus.AVAILABLE),
+        (
+            FakeCommandResult(1, stderr="ERROR 1045: Access denied for password secret-value"),
+            DatabaseAvailabilityStatus.AUTHENTICATION_DENIED,
+        ),
+        (
+            FakeCommandResult(1, stderr="ERROR 1049: Unknown database 'missing'"),
+            DatabaseAvailabilityStatus.SCHEMA_NOT_FOUND,
+        ),
+        (
+            FakeCommandResult(1, stderr="ERROR 2003: Can't connect to MySQL server"),
+            DatabaseAvailabilityStatus.ENDPOINT_UNAVAILABLE,
+        ),
+        (
+            FakeCommandResult(1, stderr="unexpected secret-value"),
+            DatabaseAvailabilityStatus.UNKNOWN,
+        ),
+    ],
+)
+def test_mysql_database_probe_returns_redacted_evidence(result, expected) -> None:
+    probe = MySQLAdapter({"db": database()}, Secrets(), FakeCommandRunner([result])).probe_database(
+        "db", "site"
+    )
+    assert probe.status is expected
+    assert "secret-value" not in probe.detail
+
+
+def test_mysql_database_probe_reports_insufficient_configuration_without_command() -> None:
+    runner = FakeCommandRunner()
+    probe = MySQLAdapter({"db": database()}, Secrets(), runner).probe_database("db", "")
+    assert probe.status is DatabaseAvailabilityStatus.CONFIGURATION_INSUFFICIENT
+    assert runner.calls == []
 
 
 def test_mysql_never_imports_into_production() -> None:
