@@ -4,7 +4,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Protocol, Sequence, Set, Tuple
 
-from wp_modernizer.domain.models import CapabilityReport, RunManifest, StepResult
+from wp_modernizer.domain.models import (
+    CapabilityReport,
+    DatabaseProbeResult,
+    RunManifest,
+    StepResult,
+)
 from wp_modernizer.domain.widgets import WidgetSnapshot
 
 
@@ -20,6 +25,10 @@ class DatabaseRegistry(Protocol):
     def get_database(self, endpoint_id: str) -> Any: ...
 
     def list_schemas(self, endpoint_id: str) -> Set[str]: ...
+
+
+class DatabaseProbePort(Protocol):
+    def probe_database(self, endpoint_id: str, database: str) -> DatabaseProbeResult: ...
 
 
 class FileTransferPort(ServerRegistry, Protocol):

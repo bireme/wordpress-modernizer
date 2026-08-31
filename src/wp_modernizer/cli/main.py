@@ -13,7 +13,7 @@ from wp_modernizer.application.service import ModernizerService
 from wp_modernizer.config.loader import load_config
 from wp_modernizer.config.models import ApplicationConfig
 from wp_modernizer.diagnostics.capability import CapabilityProbe
-from wp_modernizer.domain.enums import Operation, RunStatus
+from wp_modernizer.domain.enums import Environment, Operation, RunStatus
 from wp_modernizer.domain.errors import ModernizerError
 from wp_modernizer.domain.path_parser import InstallationPathParser
 from wp_modernizer.infrastructure.command import SubprocessCommandRunner
@@ -51,6 +51,14 @@ def build_service(
     ssh = FileTransferRouter(config.servers, key_transport, password_transport)
     mysql = MySQLAdapter(config.databases, secret_provider, command_runner)
     wpcli = WPCLIAdapter(command_runner)
+    database_endpoints = {
+        installation.destination_path: tuple(
+            endpoint_id
+            for endpoint_id in installation.allowed_database_endpoints
+            if config.databases[endpoint_id].environment is Environment.TEST
+        )
+        for installation in config.installations.values()
+    }
     operations = RuntimeOperations(
         ssh,
         mysql,
@@ -60,7 +68,13 @@ def build_service(
     )
     return ModernizerService(
         config,
-        CapabilityProbe(command_runner, filesystem),
+        CapabilityProbe(
+            command_runner,
+            filesystem,
+            database=mysql,
+            wordpress=wpcli,
+            database_endpoints=database_endpoints,
+        ),
         JsonStateStore(config.state_directory),
         filesystem,
         SystemClock(),

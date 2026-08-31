@@ -7,15 +7,17 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Iterator, Mapping, Set
 
-from wp_modernizer.application.ports import CommandRunner, SecretProvider
+from wp_modernizer.application.ports import CommandResult, CommandRunner, SecretProvider
 from wp_modernizer.config.models import DatabaseConfig
-from wp_modernizer.domain.enums import Environment
+from wp_modernizer.domain.enums import DatabaseAvailabilityStatus, Environment
 from wp_modernizer.domain.errors import (
     AuthenticationError,
+    CommandTimeoutError,
     ConfigurationError,
     InfrastructureError,
     UnsafeOperationError,
 )
+from wp_modernizer.domain.models import DatabaseProbeResult
 from wp_modernizer.domain.widgets import WidgetOption, WidgetSnapshot
 
 
@@ -45,6 +47,41 @@ class MySQLAdapter:
     def list_schemas(self, endpoint_id: str) -> Set[str]:
         result = self._query(endpoint_id, "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA")
         return set(result.splitlines())
+
+    def probe_database(self, endpoint_id: str, database: str) -> DatabaseProbeResult:
+        if not endpoint_id or not database:
+            return self._probe_result(DatabaseAvailabilityStatus.CONFIGURATION_INSUFFICIENT)
+        try:
+            result = self._run_query(endpoint_id, "SELECT 1", database)
+        except (ConfigurationError, FileNotFoundError):
+            return self._probe_result(DatabaseAvailabilityStatus.CONFIGURATION_INSUFFICIENT)
+        except (CommandTimeoutError, TimeoutError):
+            return self._probe_result(DatabaseAvailabilityStatus.ENDPOINT_UNAVAILABLE)
+        except Exception:
+            return self._probe_result(DatabaseAvailabilityStatus.UNKNOWN)
+
+        if result.return_code == 0:
+            return self._probe_result(DatabaseAvailabilityStatus.AVAILABLE)
+        error = result.stderr.lower()
+        if "access denied" in error or "error 1045" in error:
+            return self._probe_result(DatabaseAvailabilityStatus.AUTHENTICATION_DENIED)
+        if "unknown database" in error or "error 1049" in error:
+            return self._probe_result(DatabaseAvailabilityStatus.SCHEMA_NOT_FOUND)
+        unavailable_markers = (
+            "error 2002",
+            "error 2003",
+            "error 2005",
+            "error 2006",
+            "error 2013",
+            "can't connect",
+            "cannot connect",
+            "connection refused",
+            "lost connection",
+            "unknown mysql server host",
+        )
+        if any(marker in error for marker in unavailable_markers):
+            return self._probe_result(DatabaseAvailabilityStatus.ENDPOINT_UNAVAILABLE)
+        return self._probe_result(DatabaseAvailabilityStatus.UNKNOWN)
 
     def dump(self, endpoint_id: str, database: str, output: Path, run_id: str) -> None:
         endpoint = self.get_database(endpoint_id)
@@ -122,6 +159,11 @@ class MySQLAdapter:
         }
 
     def _query(self, endpoint_id: str, sql: str, database: str = "") -> str:
+        result = self._run_query(endpoint_id, sql, database)
+        self._ensure_success(result.return_code, result.stderr)
+        return result.stdout
+
+    def _run_query(self, endpoint_id: str, sql: str, database: str = "") -> CommandResult:
         endpoint = self.get_database(endpoint_id)
         with self._defaults_file(endpoint) as defaults:
             argv = [
@@ -135,8 +177,25 @@ class MySQLAdapter:
                 argv.append(database)
             argv.extend(["--execute", sql])
             result = self._runner.run(argv, timeout=60)
-        self._ensure_success(result.return_code, result.stderr)
-        return result.stdout
+        return result
+
+    @staticmethod
+    def _probe_result(status: DatabaseAvailabilityStatus) -> DatabaseProbeResult:
+        details = {
+            DatabaseAvailabilityStatus.AVAILABLE: (
+                "endpoint alcançável; autenticação aceita; schema disponível"
+            ),
+            DatabaseAvailabilityStatus.AUTHENTICATION_DENIED: (
+                "endpoint alcançável; autenticação negada"
+            ),
+            DatabaseAvailabilityStatus.SCHEMA_NOT_FOUND: (
+                "endpoint alcançável; autenticação aceita; schema inexistente"
+            ),
+            DatabaseAvailabilityStatus.ENDPOINT_UNAVAILABLE: "endpoint indisponível",
+            DatabaseAvailabilityStatus.CONFIGURATION_INSUFFICIENT: "configuração insuficiente",
+            DatabaseAvailabilityStatus.UNKNOWN: "estado do banco desconhecido",
+        }
+        return DatabaseProbeResult(status, details[status])
 
     @contextmanager
     def _defaults_file(self, endpoint: DatabaseConfig) -> Iterator[Path]:

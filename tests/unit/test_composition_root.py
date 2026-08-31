@@ -106,6 +106,10 @@ def test_composition_root_wires_config_secrets_and_all_runtime_adapters(tmp_path
     assert operations._files.get_server("source") is config.servers["source"]
     assert isinstance(operations._databases, MySQLAdapter)
     assert operations._databases.get_database("test-db") is config.databases["test-db"]
+    assert service._probe._database is operations._databases
+    assert service._probe._database_endpoints == {
+        config.installations["site"].destination_path: ("test-db",)
+    }
     assert isinstance(operations._wordpress, WPCLIAdapter)
 
     context = {

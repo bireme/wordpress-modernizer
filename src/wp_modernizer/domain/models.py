@@ -6,6 +6,7 @@ from typing import Dict, FrozenSet, List, Optional, Tuple
 
 from .enums import (
     Capability,
+    DatabaseAvailabilityStatus,
     Environment,
     HealthStatus,
     Operation,
@@ -46,6 +47,16 @@ class ProbeResult:
     capability: Capability
     available: bool
     detail: str = ""
+
+
+@dataclass(frozen=True)
+class DatabaseProbeResult:
+    status: DatabaseAvailabilityStatus
+    detail: str
+
+    @property
+    def available(self) -> bool:
+        return self.status is DatabaseAvailabilityStatus.AVAILABLE
 
 
 @dataclass(frozen=True)
