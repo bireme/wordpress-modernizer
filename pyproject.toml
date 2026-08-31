@@ -12,7 +12,7 @@ license = {text = "Seleção de licença pendente de aprovação organizacional"
 authors = [{name = "Colaboradores do wp-modernizer"}]
 dependencies = [
   "click>=8.1,<9",
-  "paramiko>=3.4,<5",
+  "paramiko>=5.0,<6",
   "pydantic>=2,<3",
   "PyYAML>=6,<7",
 ]
