@@ -149,7 +149,9 @@ class ModernizerService:
         elif operation is Operation.UPDATE:
             planned_steps = update_steps
         elif operation is Operation.PIPELINE:
-            planned_steps = migration_plan.steps + update_steps
+            planned_steps = migration_plan.steps + tuple(
+                step for step in update_steps if step.name != "pending_search_replace"
+            )
         else:
             raise ConfigurationError(f"Operação de execução não suportada: {operation.value}")
         run_id = self._ids.new()
@@ -179,6 +181,7 @@ class ModernizerService:
             "installations": self.config.installations,
             "migration_plan": migration_plan,
             "recovery_data": manifest.recovery_data,
+            "manifest": manifest,
         }
         steps = tuple(OperationStep(step, self._operations) for step in planned_steps)
         return self._runner.run(manifest, path, steps, context)
@@ -224,6 +227,7 @@ class ModernizerService:
                 "restore_widgets": parameters["restore_widgets"],
                 "recovery_data": new.recovery_data,
                 "resumed_from": run_id,
+                "manifest": new,
             },
         )
 

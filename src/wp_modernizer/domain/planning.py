@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Iterable, Tuple
 
-from .enums import Environment
+from .enums import Environment, PendingOperationType
 from .models import MigrationPlan, PendingOperation, PlannedStep, WordPressInstallation
 
 
@@ -61,6 +61,21 @@ class MigrationPlanner:
                         node.installation_id,
                     )
                 )
+        if any(
+            operation.operation_type is PendingOperationType.SEARCH_REPLACE
+            and not operation.completed
+            for operation in pending_operations
+        ):
+            steps.append(
+                PlannedStep(
+                    name="pending_search_replace",
+                    mutable=True,
+                    idempotent=True,
+                    completion_probe="a URL de origem não permanece no banco de TESTE",
+                    partial_recovery="preservar a cópia e repetir o search-replace com WP-CLI",
+                    installation_id=installation_id,
+                )
+            )
         return MigrationPlan(
             installation_id=installation_id,
             source_environment=source_environment,

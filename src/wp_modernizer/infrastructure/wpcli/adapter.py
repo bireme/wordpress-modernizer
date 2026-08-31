@@ -30,6 +30,16 @@ class WPCLIAdapter:
             raise WordPressUnavailableError(result.stderr)
         return result.stdout.strip()
 
+    def is_multisite(self, path: Path, run_id: str) -> bool:
+        result = self._runner.run(
+            [self._binary, f"--path={path}", "config", "get", "MULTISITE", "--type=constant"],
+            timeout=60,
+            correlation_id=run_id,
+        )
+        if result.return_code != 0:
+            return False
+        return result.stdout.strip().lower() in {"1", "true"}
+
     def get_config(self, path: Path, name: str, run_id: str) -> str:
         result = self._runner.run(
             [self._binary, f"--path={path}", "config", "get", name],
@@ -42,7 +52,7 @@ class WPCLIAdapter:
 
     def search_replace(
         self, path: Path, old_url: str, new_url: str, *, dry_run: bool, multisite: bool, run_id: str
-    ) -> str:
+    ) -> int:
         argv = [
             self._binary,
             f"--path={path}",
@@ -54,6 +64,7 @@ class WPCLIAdapter:
             "--all-tables-with-prefix",
             "--precise",
             "--report-changed-only",
+            "--format=count",
         ]
         if dry_run:
             argv.append("--dry-run")
@@ -62,9 +73,14 @@ class WPCLIAdapter:
         result = self._runner.run(argv, timeout=600, correlation_id=run_id)
         if result.return_code != 0:
             raise WordPressUnavailableError(
-                f"falha no search-replace que considera serialização: {result.stderr}"
+                "falha no search-replace que considera serialização; consulte o log redigido"
             )
-        return result.stdout
+        try:
+            return int(result.stdout.strip())
+        except ValueError as exc:
+            raise WordPressUnavailableError(
+                "WP-CLI retornou uma contagem inválida para o search-replace"
+            ) from exc
 
     def set_config(self, path: Path, values: Mapping[str, str], run_id: str) -> None:
         for name, value in values.items():
