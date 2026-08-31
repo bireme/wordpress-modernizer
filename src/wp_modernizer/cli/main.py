@@ -4,7 +4,7 @@ import json
 import sys
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import click
 
@@ -21,7 +21,11 @@ from wp_modernizer.infrastructure.filesystem import LocalFileSystem
 from wp_modernizer.infrastructure.mysql.adapter import MySQLAdapter
 from wp_modernizer.infrastructure.runtime_operations import RuntimeOperations
 from wp_modernizer.infrastructure.secrets import EnvironmentSecretProvider
-from wp_modernizer.infrastructure.ssh.adapter import RSyncSSHAdapter
+from wp_modernizer.infrastructure.ssh import (
+    FileTransferRouter,
+    PasswordSFTPAdapter,
+    RSyncSSHAdapter,
+)
 from wp_modernizer.infrastructure.state import JsonStateStore
 from wp_modernizer.infrastructure.time import SystemClock, UUIDGenerator
 from wp_modernizer.infrastructure.wpcli.adapter import WPCLIAdapter
@@ -32,12 +36,19 @@ def build_service(
     *,
     runner: CommandRunner | None = None,
     secrets: SecretProvider | None = None,
+    ssh_client_factory: Callable[[], Any] | None = None,
 ) -> ModernizerService:
     """Composition root da aplicação; dependências opcionais mantêm os testes sem subprocessos."""
     command_runner = runner or SubprocessCommandRunner()
     secret_provider = secrets or EnvironmentSecretProvider()
     filesystem = LocalFileSystem()
-    ssh = RSyncSSHAdapter(config.servers, secret_provider, command_runner)
+    key_transport = RSyncSSHAdapter(config.servers, secret_provider, command_runner)
+    password_transport = (
+        PasswordSFTPAdapter(config.servers, secret_provider, client_factory=ssh_client_factory)
+        if ssh_client_factory is not None
+        else PasswordSFTPAdapter(config.servers, secret_provider)
+    )
+    ssh = FileTransferRouter(config.servers, key_transport, password_transport)
     mysql = MySQLAdapter(config.databases, secret_provider, command_runner)
     wpcli = WPCLIAdapter(command_runner)
     operations = RuntimeOperations(

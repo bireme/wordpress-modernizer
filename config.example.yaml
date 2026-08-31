@@ -7,9 +7,11 @@ servers:
     port: 22
     environment: production
     username_secret: PROD_EXAMPLE_USERNAME
-    authentication: key
-    private_key: /path/to/private/key
+    authentication: password
+    password_secret: PROD_EXAMPLE_PASSWORD
     host_key_policy: strict
+    # Opcional: arquivo adicional no formato OpenSSH. Sem esta opção, usa ~/.ssh/known_hosts.
+    # known_hosts_file: /etc/wp-modernizer/known_hosts
 databases:
   test-db-example:
     host: db-test.example.invalid
@@ -38,4 +40,3 @@ observability:
   json_stdout: true
   log_file: null
   otel_enabled: false
-

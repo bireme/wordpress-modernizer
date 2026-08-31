@@ -16,7 +16,9 @@ adaptador. Uma simulação ainda sonda capacidades e grava seu manifesto externo
 que o trabalho proposto possa ser auditado. Intencionalmente, não existe comando de publicação
 em produção.
 
-O adaptador público de execução delega cópias ao SSH/rsync, descoberta e transferência de bancos
+O adaptador público de execução delega cópias à porta de transporte remoto. Um roteador usa
+SSH/rsync para autenticação por chave e SSH/SFTP (Paramiko) para autenticação por senha. A
+descoberta e transferência de bancos é delegada
 ao MySQL e operações WordPress ao WP-CLI. Uma migração de banco exige endpoints de origem e de
 TESTE permitidos e resolução não ambígua. Credenciais do `wp-config` são entregues ao WP-CLI por
 entrada padrão, e não por `argv`. A retenção de uma cópia de teste já existente continua falhando

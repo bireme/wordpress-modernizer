@@ -34,10 +34,9 @@ class RSyncSSHAdapter:
         run_id: str,
     ) -> int:
         server = self.get_server(server_id)
-        if server.authentication == "password":
+        if server.authentication != "key":
             raise ConfigurationError(
-                "SSH com senha requer um adaptador separado, sem linha de comando e revisado; "
-                "autenticação por chave é o padrão público"
+                "O adaptador SSH/rsync aceita apenas servidores com autenticação por chave"
             )
         # O usuário vem de SecretProvider e, por isso, não pode fazer parte de argv. Um arquivo
         # efêmero 0600 é entendido diretamente pelo ssh e removido mesmo quando o rsync falha.
