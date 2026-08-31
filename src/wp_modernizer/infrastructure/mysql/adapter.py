@@ -14,6 +14,7 @@ from wp_modernizer.domain.errors import (
     AuthenticationError,
     CommandTimeoutError,
     ConfigurationError,
+    DatabaseNotFoundError,
     InfrastructureError,
     UnsafeOperationError,
 )
@@ -105,6 +106,11 @@ class MySQLAdapter:
         endpoint = self.get_database(endpoint_id)
         if endpoint.environment is not Environment.TEST:
             raise UnsafeOperationError("Importações MySQL são proibidas fora de TESTE")
+        if database not in self.list_schemas(endpoint_id):
+            raise DatabaseNotFoundError(
+                f"O schema de TESTE {database!r} não existe; a infraestrutura deve provisioná-lo "
+                "antes da importação"
+            )
         with self._defaults_file(endpoint) as defaults:
             result = self._runner.run(
                 [

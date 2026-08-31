@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from wp_modernizer.config.models import ApplicationConfig, ServerConfig
+from wp_modernizer.config.models import ApplicationConfig, DatabaseConfig, ServerConfig
 
 
 def valid_config():
@@ -59,6 +59,45 @@ def test_config_rejects_relative_allowed_root() -> None:
     raw = valid_config()
     raw["allowed_app_roots"] = ["relative/path"]
     with pytest.raises(ValidationError, match="caminhos absolutos"):
+        ApplicationConfig.model_validate(raw)
+
+
+def test_config_accepts_explicit_test_url() -> None:
+    raw = valid_config()
+    raw["installations"]["i"]["test_url"] = "https://qa.example.invalid/wordpress"
+    config = ApplicationConfig.model_validate(raw)
+    assert str(config.installations["i"].test_url) == "https://qa.example.invalid/wordpress"
+
+
+def test_config_rejects_invalid_test_url() -> None:
+    raw = valid_config()
+    raw["installations"]["i"]["test_url"] = "not-a-url"
+    with pytest.raises(ValidationError, match="test_url"):
+        ApplicationConfig.model_validate(raw)
+
+
+@pytest.mark.parametrize("legacy_value", [False, True])
+def test_config_rejects_removed_allow_create_with_migration_message(
+    legacy_value: bool,
+) -> None:
+    raw = valid_config()
+    raw["databases"]["d"]["allow_create"] = legacy_value
+    with pytest.raises(
+        ValidationError,
+        match=r"allow_create foi removido.*infraestrutura.*provisionamento prévio",
+    ):
+        ApplicationConfig.model_validate(raw)
+
+
+def test_allow_create_is_not_part_of_public_database_schema() -> None:
+    assert "allow_create" not in DatabaseConfig.model_json_schema()["properties"]
+
+
+@pytest.mark.parametrize("field", ["database_override", "database_aliases"])
+def test_config_rejects_blank_database_mapping_names(field: str) -> None:
+    raw = valid_config()
+    raw["installations"]["i"][field] = " " if field == "database_override" else [" "]
+    with pytest.raises(ValidationError, match=field):
         ApplicationConfig.model_validate(raw)
 
 

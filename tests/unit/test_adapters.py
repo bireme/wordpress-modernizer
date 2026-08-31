@@ -9,12 +9,18 @@ import pytest
 
 from tests.fakes.core import FakeCommandResult, FakeCommandRunner
 from wp_modernizer.config.models import DatabaseConfig, ServerConfig
-from wp_modernizer.domain.enums import DatabaseAvailabilityStatus, Environment
+from wp_modernizer.domain.enums import (
+    DatabaseAvailabilityStatus,
+    Environment,
+    PendingOperationType,
+    StepStatus,
+)
 from wp_modernizer.domain.errors import (
     AuthenticationError,
     AuthenticationRefusedError,
     CommandTimeoutError,
     ConfigurationError,
+    DatabaseNotFoundError,
     HostKeyVerificationError,
     InfrastructureError,
     PasswordAuthenticationError,
@@ -22,8 +28,10 @@ from wp_modernizer.domain.errors import (
     TransferError,
     UnsafeOperationError,
 )
+from wp_modernizer.domain.models import PendingOperation, PlannedStep
 from wp_modernizer.infrastructure.filesystem import LocalFileSystem
 from wp_modernizer.infrastructure.mysql.adapter import MySQLAdapter
+from wp_modernizer.infrastructure.runtime_operations import RuntimeOperations
 from wp_modernizer.infrastructure.secrets import EnvironmentSecretProvider
 from wp_modernizer.infrastructure.ssh.adapter import RSyncSSHAdapter
 from wp_modernizer.infrastructure.ssh.password_adapter import PasswordSFTPAdapter
@@ -189,6 +197,26 @@ def test_mysql_never_imports_into_production() -> None:
     assert runner.calls == []
 
 
+def test_mysql_import_requires_preexisting_test_schema() -> None:
+    runner = FakeCommandRunner([FakeCommandResult(stdout="another_schema\n")])
+    with pytest.raises(DatabaseNotFoundError, match="infraestrutura deve provisioná-lo"):
+        MySQLAdapter({"db": database()}, Secrets(), runner).import_dump(
+            "db", "wp_portal_tst", Path("/tmp/dump.sql"), "r"
+        )
+    assert len(runner.calls) == 1
+    assert any("INFORMATION_SCHEMA.SCHEMATA" in argument for argument in runner.calls[0])
+
+
+def test_mysql_imports_only_after_test_schema_is_confirmed() -> None:
+    runner = FakeCommandRunner([FakeCommandResult(stdout="wp_portal_tst\n"), FakeCommandResult()])
+    MySQLAdapter({"db": database()}, Secrets(), runner).import_dump(
+        "db", "wp_portal_tst", Path("/tmp/dump.sql"), "r"
+    )
+    assert len(runner.calls) == 2
+    assert "--execute" in runner.calls[0]
+    assert runner.calls[1][-1] == "wp_portal_tst"
+
+
 def test_mysql_widget_snapshot_preserves_binary_and_rejects_bad_table() -> None:
     runner = FakeCommandRunner(
         [
@@ -204,19 +232,99 @@ def test_mysql_widget_snapshot_preserves_binary_and_rejects_bad_table() -> None:
 
 
 def test_wpcli_adapter_dry_run_multisite_and_failure() -> None:
-    runner = FakeCommandRunner([FakeCommandResult(stdout="changed")])
+    runner = FakeCommandRunner([FakeCommandResult(stdout="7\n")])
     adapter = WPCLIAdapter(runner)
     assert (
         adapter.search_replace(
             Path("/site"), "https://old", "https://new", dry_run=True, multisite=True, run_id="r"
         )
-        == "changed"
+        == 7
     )
     assert "--dry-run" in runner.calls[0] and "--network" in runner.calls[0]
+    assert "--precise" in runner.calls[0] and "--format=count" in runner.calls[0]
     with pytest.raises(Exception, match="failed"):
         WPCLIAdapter(FakeCommandRunner([FakeCommandResult(1, stderr="failed")])).update(
             Path("/site"), ["core", "update"], "r"
         )
+
+
+def test_wpcli_reads_site_url_without_loading_plugins_or_themes() -> None:
+    runner = FakeCommandRunner([FakeCommandResult(stdout="https://boletin.bireme.org\n")])
+    assert WPCLIAdapter(runner).get_site_url(Path("/site"), "r") == ("https://boletin.bireme.org")
+    assert "--skip-plugins" in runner.calls[0]
+    assert "--skip-themes" in runner.calls[0]
+
+
+def test_wpcli_detects_multisite_from_wordpress_constant() -> None:
+    enabled = FakeCommandRunner([FakeCommandResult(stdout="true\n")])
+    disabled = FakeCommandRunner([FakeCommandResult(return_code=1)])
+    assert WPCLIAdapter(enabled).is_multisite(Path("/site"), "r") is True
+    assert WPCLIAdapter(disabled).is_multisite(Path("/site"), "r") is False
+
+
+def test_wpcli_search_replace_failure_does_not_expose_stderr() -> None:
+    adapter = WPCLIAdapter(
+        FakeCommandRunner([FakeCommandResult(return_code=1, stderr="database-password")])
+    )
+    with pytest.raises(Exception) as failure:
+        adapter.search_replace(
+            Path("/site"),
+            "https://old",
+            "https://new",
+            dry_run=False,
+            multisite=False,
+            run_id="r",
+        )
+    assert "database-password" not in str(failure.value)
+
+
+def test_runtime_search_replace_derives_test_url_from_discovered_site_url() -> None:
+    class WordPress:
+        replaced: tuple[str, str] | None = None
+
+        def get_site_url(self, path: Path, run_id: str) -> str:
+            del path, run_id
+            return "https://boletin.bireme.org/wordpress"
+
+        def is_multisite(self, path: Path, run_id: str) -> bool:
+            del path, run_id
+            return False
+
+        def search_replace(self, path: Path, old_url: str, new_url: str, **kwargs: Any) -> int:
+            del path, kwargs
+            self.replaced = (old_url, new_url)
+            return 4
+
+    wordpress = WordPress()
+    operations = RuntimeOperations(
+        SimpleNamespace(),
+        SimpleNamespace(),
+        wordpress,  # type: ignore[arg-type]
+        SimpleNamespace(),
+    )
+    pending = PendingOperation(
+        PendingOperationType.SEARCH_REPLACE,
+        {"organizational_domain": "bireme.org", "test_url": ""},
+        "test",
+    )
+    context = {
+        "run_id": "r",
+        "installation": SimpleNamespace(
+            destination_environment=Environment.TEST,
+            destination_path=Path("/site"),
+        ),
+        "installations": {},
+        "migration_plan": SimpleNamespace(pending_operations=(pending,)),
+        "planned_step": PlannedStep("pending_search_replace", True, True, "", "", "site"),
+    }
+
+    result = operations.execute("pending_search_replace", context)
+
+    assert result.status is StepStatus.SUCCEEDED
+    assert wordpress.replaced == (
+        "https://boletin.bireme.org/wordpress",
+        "https://boletin.teste.bireme.org/wordpress",
+    )
 
 
 def test_wpcli_writes_config_values_via_stdin_not_argv() -> None:

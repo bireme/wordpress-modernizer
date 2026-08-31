@@ -1,4 +1,5 @@
 state_directory: ./state
+organizational_domain: bireme.org
 allowed_app_roots:
   - /home/apps
 servers:
@@ -13,6 +14,7 @@ servers:
     # Opcional: arquivo adicional no formato OpenSSH. Sem esta opção, usa ~/.ssh/known_hosts.
     # known_hosts_file: /etc/wp-modernizer/known_hosts
 databases:
+  # Todos os schemas devem ser provisionados previamente pela infraestrutura.
   test-db-example:
     host: db-test.example.invalid
     port: 3306
@@ -26,9 +28,16 @@ installations:
     source_path: /home/apps/example.org/wp-main/htdocs
     destination_path: /home/apps/example.org/wp-main-test/htdocs
     destination_environment: test
+    # Omitido no caso convencional: https://boletin.bireme.org vira
+    # https://boletin.teste.bireme.org. Para uma exceção, declare explicitamente:
+    # test_url: https://destino-excepcional.example.org
     allowed_database_endpoints: [test-db-example]
+    # Nomes completos alternativos, comparados de forma exata após o candidato *_tst.
     database_aliases: []
+    # Exceção com precedência absoluta; o schema deve existir previamente no endpoint de TESTE.
+    # database_override: wp_nome_excepcional
     core_checkpoints: []
+# Compatibilidade com configurações antigas. Prefira database_override dentro da instalação.
 database_overrides: {}
 managed_plugins:
   - slug: example-plugin

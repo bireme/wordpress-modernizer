@@ -115,7 +115,10 @@ class ModernizerService:
         pending = (
             PendingOperation(
                 PendingOperationType.SEARCH_REPLACE,
-                {"old_url": "discovered-at-runtime", "new_url": "configured-test-url"},
+                {
+                    "test_url": str(item.test_url) if item.test_url is not None else "",
+                    "organizational_domain": self.config.organizational_domain,
+                },
                 "executa somente após uma simulação bem-sucedida com WP-CLI reduzido",
             ),
         )
@@ -123,7 +126,9 @@ class ModernizerService:
             installation_id,
             item.source_environment,
             item.source_server,
-            item.database_override or "resolved-at-runtime",
+            item.database_override
+            or self.config.database_overrides.get(installation_id)
+            or "resolved-at-runtime",
             installations,
             pending,
         )
@@ -146,7 +151,9 @@ class ModernizerService:
         elif operation is Operation.UPDATE:
             planned_steps = update_steps
         elif operation is Operation.PIPELINE:
-            planned_steps = migration_plan.steps + update_steps
+            planned_steps = migration_plan.steps + tuple(
+                step for step in update_steps if step.name != "pending_search_replace"
+            )
         else:
             raise ConfigurationError(f"Operação de execução não suportada: {operation.value}")
         run_id = self._ids.new()
@@ -176,6 +183,7 @@ class ModernizerService:
             "installations": self.config.installations,
             "migration_plan": migration_plan,
             "recovery_data": manifest.recovery_data,
+            "manifest": manifest,
         }
         steps = tuple(OperationStep(step, self._operations) for step in planned_steps)
         return self._runner.run(manifest, path, steps, context)
@@ -221,6 +229,7 @@ class ModernizerService:
                 "restore_widgets": parameters["restore_widgets"],
                 "recovery_data": new.recovery_data,
                 "resumed_from": run_id,
+                "manifest": new,
             },
         )
 

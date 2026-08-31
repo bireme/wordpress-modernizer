@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from wp_modernizer.domain.enums import Environment
+from wp_modernizer.domain.enums import Environment, PendingOperationType
+from wp_modernizer.domain.models import PendingOperation
 from wp_modernizer.domain.path_parser import InstallationPathParser
 from wp_modernizer.domain.planning import MigrationPlanner
 
@@ -33,3 +34,23 @@ def test_multiple_nesting_levels_each_exclude_descendants() -> None:
     copies = {step.installation_id: step for step in plan.steps if step.name == "copy_files"}
     assert len(copies["p"].excludes) >= 4
     assert paths[2].path in copies["c"].excludes
+
+
+def test_pending_search_replace_runs_after_test_database_is_prepared() -> None:
+    parser = InstallationPathParser([Path("/home/apps")])
+    installation = parser.parse("/home/apps/example.org/wp-main/htdocs", "site", Environment.TEST)
+    pending = PendingOperation(
+        PendingOperationType.SEARCH_REPLACE,
+        {"organizational_domain": "bireme.org", "test_url": ""},
+        "test",
+    )
+    plan = MigrationPlanner().build(
+        "site",
+        Environment.PRODUCTION,
+        "source",
+        "db",
+        [installation],
+        (pending,),
+    )
+    names = [step.name for step in plan.steps]
+    assert names[-2:] == ["write_test_db_config", "pending_search_replace"]
