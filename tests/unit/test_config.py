@@ -76,6 +76,21 @@ def test_config_rejects_invalid_test_url() -> None:
         ApplicationConfig.model_validate(raw)
 
 
+def test_config_never_allows_database_creation() -> None:
+    raw = valid_config()
+    raw["databases"]["d"]["allow_create"] = True
+    with pytest.raises(ValidationError, match="allow_create"):
+        ApplicationConfig.model_validate(raw)
+
+
+@pytest.mark.parametrize("field", ["database_override", "database_aliases"])
+def test_config_rejects_blank_database_mapping_names(field: str) -> None:
+    raw = valid_config()
+    raw["installations"]["i"][field] = " " if field == "database_override" else [" "]
+    with pytest.raises(ValidationError, match=field):
+        ApplicationConfig.model_validate(raw)
+
+
 def test_password_authentication_requires_password_secret() -> None:
     with pytest.raises(ValidationError, match="requer password_secret"):
         ServerConfig(

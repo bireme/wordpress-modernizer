@@ -31,8 +31,12 @@ installations:
     # https://boletin.teste.bireme.org. Para uma exceção, declare explicitamente:
     # test_url: https://destino-excepcional.example.org
     allowed_database_endpoints: [test-db-example]
+    # Nomes completos alternativos, comparados de forma exata após o candidato *_tst.
     database_aliases: []
+    # Exceção com precedência absoluta; o schema deve existir previamente no endpoint de TESTE.
+    # database_override: wp_nome_excepcional
     core_checkpoints: []
+# Compatibilidade com configurações antigas. Prefira database_override dentro da instalação.
 database_overrides: {}
 managed_plugins:
   - slug: example-plugin

@@ -33,7 +33,7 @@ class DatabaseConfig(BaseModel):
     environment: Environment = Environment.TEST
     username_secret: str
     password_secret: str
-    allow_create: bool = False
+    allow_create: Literal[False] = False
 
 
 class InstallationConfig(BaseModel):
@@ -61,6 +61,26 @@ class InstallationConfig(BaseModel):
         if value is not None and value.scheme != "https":
             raise ValueError("test_url deve usar HTTPS")
         return value
+
+    @field_validator("database_aliases")
+    @classmethod
+    def database_aliases_are_exact_names(cls, value: List[str]) -> List[str]:
+        normalized = [name.strip() for name in value]
+        if any(not name for name in normalized):
+            raise ValueError("database_aliases não pode conter nomes vazios")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("database_aliases não pode conter nomes duplicados")
+        return normalized
+
+    @field_validator("database_override")
+    @classmethod
+    def database_override_is_not_blank(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("database_override não pode ser vazio")
+        return normalized
 
 
 class ManagedPluginConfig(BaseModel):
@@ -92,6 +112,16 @@ class ApplicationConfig(BaseModel):
     @classmethod
     def organizational_domain_is_valid(cls, value: str) -> str:
         return OrganizationalTestUrlPolicy(value).organizational_domain
+
+    @field_validator("database_overrides")
+    @classmethod
+    def legacy_database_overrides_are_not_blank(cls, value: Dict[str, str]) -> Dict[str, str]:
+        if any(
+            not installation.strip() or not database.strip()
+            for installation, database in value.items()
+        ):
+            raise ValueError("database_overrides não pode conter chaves ou nomes vazios")
+        return {installation.strip(): database.strip() for installation, database in value.items()}
 
     @field_validator("allowed_app_roots")
     @classmethod
