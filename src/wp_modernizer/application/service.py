@@ -115,7 +115,10 @@ class ModernizerService:
         pending = (
             PendingOperation(
                 PendingOperationType.SEARCH_REPLACE,
-                {"old_url": "discovered-at-runtime", "new_url": "configured-test-url"},
+                {
+                    "test_url": str(item.test_url) if item.test_url is not None else "",
+                    "organizational_domain": self.config.organizational_domain,
+                },
                 "executa somente após uma simulação bem-sucedida com WP-CLI reduzido",
             ),
         )

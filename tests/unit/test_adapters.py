@@ -9,7 +9,12 @@ import pytest
 
 from tests.fakes.core import FakeCommandResult, FakeCommandRunner
 from wp_modernizer.config.models import DatabaseConfig, ServerConfig
-from wp_modernizer.domain.enums import DatabaseAvailabilityStatus, Environment
+from wp_modernizer.domain.enums import (
+    DatabaseAvailabilityStatus,
+    Environment,
+    PendingOperationType,
+    StepStatus,
+)
 from wp_modernizer.domain.errors import (
     AuthenticationError,
     AuthenticationRefusedError,
@@ -22,8 +27,10 @@ from wp_modernizer.domain.errors import (
     TransferError,
     UnsafeOperationError,
 )
+from wp_modernizer.domain.models import PendingOperation, PlannedStep
 from wp_modernizer.infrastructure.filesystem import LocalFileSystem
 from wp_modernizer.infrastructure.mysql.adapter import MySQLAdapter
+from wp_modernizer.infrastructure.runtime_operations import RuntimeOperations
 from wp_modernizer.infrastructure.secrets import EnvironmentSecretProvider
 from wp_modernizer.infrastructure.ssh.adapter import RSyncSSHAdapter
 from wp_modernizer.infrastructure.ssh.password_adapter import PasswordSFTPAdapter
@@ -217,6 +224,58 @@ def test_wpcli_adapter_dry_run_multisite_and_failure() -> None:
         WPCLIAdapter(FakeCommandRunner([FakeCommandResult(1, stderr="failed")])).update(
             Path("/site"), ["core", "update"], "r"
         )
+
+
+def test_wpcli_reads_site_url_without_loading_plugins_or_themes() -> None:
+    runner = FakeCommandRunner([FakeCommandResult(stdout="https://boletin.bireme.org\n")])
+    assert WPCLIAdapter(runner).get_site_url(Path("/site"), "r") == ("https://boletin.bireme.org")
+    assert "--skip-plugins" in runner.calls[0]
+    assert "--skip-themes" in runner.calls[0]
+
+
+def test_runtime_search_replace_derives_test_url_from_discovered_site_url() -> None:
+    class WordPress:
+        replaced: tuple[str, str] | None = None
+
+        def get_site_url(self, path: Path, run_id: str) -> str:
+            del path, run_id
+            return "https://boletin.bireme.org/wordpress"
+
+        def search_replace(self, path: Path, old_url: str, new_url: str, **kwargs: Any) -> str:
+            del path, kwargs
+            self.replaced = (old_url, new_url)
+            return "changed"
+
+    wordpress = WordPress()
+    operations = RuntimeOperations(
+        SimpleNamespace(),
+        SimpleNamespace(),
+        wordpress,  # type: ignore[arg-type]
+        SimpleNamespace(),
+    )
+    pending = PendingOperation(
+        PendingOperationType.SEARCH_REPLACE,
+        {"organizational_domain": "bireme.org", "test_url": ""},
+        "test",
+    )
+    context = {
+        "run_id": "r",
+        "installation": SimpleNamespace(
+            destination_environment=Environment.TEST,
+            destination_path=Path("/site"),
+        ),
+        "installations": {},
+        "migration_plan": SimpleNamespace(pending_operations=(pending,)),
+        "planned_step": PlannedStep("pending_search_replace", True, True, "", "", "site"),
+    }
+
+    result = operations.execute("pending_search_replace", context)
+
+    assert result.status is StepStatus.SUCCEEDED
+    assert wordpress.replaced == (
+        "https://boletin.bireme.org/wordpress",
+        "https://boletin.teste.bireme.org/wordpress",
+    )
 
 
 def test_wpcli_writes_config_values_via_stdin_not_argv() -> None:

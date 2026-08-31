@@ -62,6 +62,20 @@ def test_config_rejects_relative_allowed_root() -> None:
         ApplicationConfig.model_validate(raw)
 
 
+def test_config_accepts_explicit_test_url() -> None:
+    raw = valid_config()
+    raw["installations"]["i"]["test_url"] = "https://qa.example.invalid/wordpress"
+    config = ApplicationConfig.model_validate(raw)
+    assert str(config.installations["i"].test_url) == "https://qa.example.invalid/wordpress"
+
+
+def test_config_rejects_invalid_test_url() -> None:
+    raw = valid_config()
+    raw["installations"]["i"]["test_url"] = "not-a-url"
+    with pytest.raises(ValidationError, match="test_url"):
+        ApplicationConfig.model_validate(raw)
+
+
 def test_password_authentication_requires_password_secret() -> None:
     with pytest.raises(ValidationError, match="requer password_secret"):
         ServerConfig(

@@ -10,6 +10,12 @@ um caminho absoluto de origem, um destino de TESTE absoluto e IDs permitidos de 
 banco de dados de teste. Apelidos e substituições exatas de bancos são explícitos. Por padrão,
 não é permitida a criação de bancos inexistentes.
 
+`organizational_domain` declara a fronteira DNS usada pela convenção de URLs de TESTE. Para
+`bireme.org`, a URL de produção `https://boletin.bireme.org` resulta em
+`https://boletin.teste.bireme.org`, enquanto `https://bireme.org` resulta em
+`https://teste.bireme.org`. O path da URL é preservado. Uma instalação excepcional pode definir
+`test_url`; o valor explícito prevalece, mas não pode reutilizar o hostname de produção.
+
 ## Transporte SSH
 
 Cada servidor escolhe o transporte explicitamente em `authentication`. O cenário principal de
