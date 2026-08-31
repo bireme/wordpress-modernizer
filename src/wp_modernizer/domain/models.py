@@ -6,6 +6,7 @@ from typing import Dict, FrozenSet, List, Optional, Tuple
 
 from .enums import (
     Capability,
+    DatabaseAvailabilityStatus,
     Environment,
     HealthStatus,
     Operation,
@@ -46,6 +47,16 @@ class ProbeResult:
     capability: Capability
     available: bool
     detail: str = ""
+
+
+@dataclass(frozen=True)
+class DatabaseProbeResult:
+    status: DatabaseAvailabilityStatus
+    detail: str
+
+    @property
+    def available(self) -> bool:
+        return self.status is DatabaseAvailabilityStatus.AVAILABLE
 
 
 @dataclass(frozen=True)
@@ -104,6 +115,7 @@ class StepResult:
     changed: bool
     message: str
     metrics: Dict[str, float] = field(default_factory=dict)
+    installation_id: Optional[str] = None
 
 
 @dataclass
@@ -126,3 +138,10 @@ class RunManifest:
     widget_diff: List[Dict[str, str]] = field(default_factory=list)
     filesystem_fingerprint: Optional[str] = None
     finished_at: Optional[str] = None
+    planned_steps: List[PlannedStep] = field(default_factory=list)
+    migration_plan: Optional[MigrationPlan] = None
+    execution_parameters: Optional[Dict[str, bool]] = None
+    recovery_data: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    original_run_id: Optional[str] = None
+    resumed_from_run_id: Optional[str] = None
+    resume_source_failed_step: Optional[str] = None

@@ -5,7 +5,13 @@ modelos imutáveis, enums, invariantes, análise de caminhos, nomenclatura e pla
 importar APIs de processos externos. `application` contém os casos de uso e as portas `Protocol`.
 `pipeline` contém etapas independentes e o executor que preserva o estado em caso de falha.
 `infrastructure` fornece adaptadores de subprocessos, estado local, YAML/ambiente, MySQL,
-SSH/rsync, WP-CLI, sistema de arquivos e Git. `cli` trata apenas da composição.
+SSH/rsync por chave, SSH/SFTP por senha, WP-CLI, sistema de arquivos e Git. `cli` trata apenas da
+composição.
+
+A composition root em `cli.main.build_service` liga a configuração ao
+`EnvironmentSecretProvider`, cria os adaptadores SSH/MySQL/WP-CLI, injeta um roteador de
+transporte que escolhe chave ou senha explicitamente em
+`RuntimeOperations` pelas portas da aplicação e, por fim, constrói `ModernizerService`.
 
 As dependências apontam para dentro. Objetos falsos implementam os mesmos `Protocol`s e permitem
 testar todas as regras de segurança sem WordPress. Dataclasses modelam valores estáveis do

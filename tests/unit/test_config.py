@@ -70,3 +70,23 @@ def test_password_authentication_requires_password_secret() -> None:
             username_secret="USER",
             authentication="password",
         )
+
+
+def test_password_authentication_accepts_secret_reference_and_rejects_private_key() -> None:
+    server = ServerConfig(
+        host="source.example.invalid",
+        environment="production",
+        username_secret="USER",
+        authentication="password",
+        password_secret="PASSWORD",
+    )
+    assert server.password_secret == "PASSWORD"
+    with pytest.raises(ValidationError, match="não utiliza private_key"):
+        ServerConfig(
+            host="source.example.invalid",
+            environment="production",
+            username_secret="USER",
+            authentication="password",
+            password_secret="PASSWORD",
+            private_key="/key",
+        )

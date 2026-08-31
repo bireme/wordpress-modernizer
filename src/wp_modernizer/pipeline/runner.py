@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, Iterable
 
@@ -40,10 +41,20 @@ class PipelineRunner:
         self._state.create_run(manifest)
         for step in steps:
             if manifest.dry_run and step.mutable:
-                result = StepResult(step.name, StepStatus.PLANNED, False, "dry-run: sem alteração")
+                result = StepResult(
+                    step.name,
+                    StepStatus.PLANNED,
+                    False,
+                    "dry-run: sem alteração",
+                    installation_id=step.installation_id or manifest.installation_id,
+                )
                 manifest.steps.append(result)
                 continue
             result = step.execute(context)
+            if result.installation_id is None:
+                result = replace(
+                    result, installation_id=step.installation_id or manifest.installation_id
+                )
             manifest.steps.append(result)
             after = self._probe.probe(installation_path)
             manifest.health_after = after.health

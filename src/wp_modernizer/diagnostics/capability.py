@@ -1,9 +1,16 @@
-from pathlib import Path
-from typing import Dict, List, Tuple
+from __future__ import annotations
 
-from wp_modernizer.application.ports import CommandRunner, FileSystem
-from wp_modernizer.domain.enums import Capability, HealthStatus
-from wp_modernizer.domain.models import CapabilityReport, ProbeResult
+from pathlib import Path
+from typing import Dict, List, Mapping, Sequence, Tuple
+
+from wp_modernizer.application.ports import (
+    CommandRunner,
+    DatabaseProbePort,
+    FileSystem,
+    WordPressPort,
+)
+from wp_modernizer.domain.enums import Capability, DatabaseAvailabilityStatus, HealthStatus
+from wp_modernizer.domain.models import CapabilityReport, DatabaseProbeResult, ProbeResult
 
 
 class CapabilityProbe:
@@ -13,11 +20,17 @@ class CapabilityProbe:
         filesystem: FileSystem,
         wp_bin: str = "wp",
         php_bin: str = "php",
+        database: DatabaseProbePort | None = None,
+        wordpress: WordPressPort | None = None,
+        database_endpoints: Mapping[Path, Sequence[str]] | None = None,
     ) -> None:
         self._runner = runner
         self._filesystem = filesystem
         self._wp = wp_bin
         self._php = php_bin
+        self._database = database
+        self._wordpress = wordpress
+        self._database_endpoints = database_endpoints or {}
 
     def probe(self, installation_path: Path) -> CapabilityReport:
         config = installation_path / "wp-config.php"
@@ -78,11 +91,8 @@ class CapabilityProbe:
             else ProbeResult(Capability.WPCLI_FULL_BOOTSTRAP, False, "WP-CLI ausente")
         )
         results[Capability.WPCLI_FULL_BOOTSTRAP] = full
-        # A disponibilidade do banco é fornecida por uma sondagem independente na composição.
-        results[Capability.DATABASE_AVAILABLE] = ProbeResult(
-            Capability.DATABASE_AVAILABLE,
-            lint.available,
-            "sondagem do banco de dados no nível da configuração",
+        results[Capability.DATABASE_AVAILABLE] = self._probe_database(
+            installation_path, lint.available, cli.available
         )
         ordered = tuple(results[item] for item in Capability)
         return CapabilityReport(ordered, self._classify(results), self._fatal_errors(full, reduced))
@@ -99,6 +109,50 @@ class CapabilityProbe:
         text = self._filesystem.read_text(config)
         compact = "".join(line.split("//", 1)[0] for line in text.splitlines())
         return "MULTISITE" in compact and "true" in compact.lower()
+
+    def _probe_database(
+        self, installation_path: Path, config_valid: bool, wpcli_available: bool
+    ) -> ProbeResult:
+        insufficient = ProbeResult(
+            Capability.DATABASE_AVAILABLE, False, "configuração insuficiente"
+        )
+        endpoints = tuple(self._database_endpoints.get(installation_path, ()))
+        if (
+            not config_valid
+            or not wpcli_available
+            or self._database is None
+            or self._wordpress is None
+            or not endpoints
+        ):
+            return insufficient
+        try:
+            database_name = self._wordpress.get_config(
+                installation_path, "DB_NAME", "capability-probe"
+            ).strip()
+        except Exception:
+            return insufficient
+        if not database_name:
+            return insufficient
+
+        evidence = [
+            self._database.probe_database(endpoint_id, database_name) for endpoint_id in endpoints
+        ]
+        available = next((item for item in evidence if item.available), None)
+        if available is not None:
+            return ProbeResult(Capability.DATABASE_AVAILABLE, True, available.detail)
+
+        precedence = (
+            DatabaseAvailabilityStatus.SCHEMA_NOT_FOUND,
+            DatabaseAvailabilityStatus.AUTHENTICATION_DENIED,
+            DatabaseAvailabilityStatus.ENDPOINT_UNAVAILABLE,
+            DatabaseAvailabilityStatus.CONFIGURATION_INSUFFICIENT,
+            DatabaseAvailabilityStatus.UNKNOWN,
+        )
+        selected = next(
+            (item for status in precedence for item in evidence if item.status is status),
+            DatabaseProbeResult(DatabaseAvailabilityStatus.UNKNOWN, "estado do banco desconhecido"),
+        )
+        return ProbeResult(Capability.DATABASE_AVAILABLE, False, selected.detail)
 
     @staticmethod
     def _classify(results: Dict[Capability, ProbeResult]) -> HealthStatus:

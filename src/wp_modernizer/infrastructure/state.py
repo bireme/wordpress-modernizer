@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from wp_modernizer.domain.enums import (
+    Environment,
     HealthStatus,
     Operation,
     PendingOperationType,
@@ -14,9 +15,12 @@ from wp_modernizer.domain.enums import (
 )
 from wp_modernizer.domain.models import (
     CapabilityReport,
+    MigrationPlan,
     PendingOperation,
+    PlannedStep,
     RunManifest,
     StepResult,
+    WordPressInstallation,
 )
 
 
@@ -51,6 +55,7 @@ class JsonStateStore:
                     item["changed"],
                     item["message"],
                     item.get("metrics", {}),
+                    item.get("installation_id"),
                 )
                 for item in raw.get("steps", [])
             ],
@@ -73,6 +78,68 @@ class JsonStateStore:
             widget_diff=raw.get("widget_diff", []),
             filesystem_fingerprint=raw.get("filesystem_fingerprint"),
             finished_at=raw.get("finished_at"),
+            planned_steps=[
+                self._deserialize_planned_step(item) for item in raw.get("planned_steps", [])
+            ],
+            migration_plan=self._deserialize_migration_plan(raw.get("migration_plan")),
+            execution_parameters=raw.get("execution_parameters"),
+            recovery_data=raw.get("recovery_data", {}),
+            original_run_id=raw.get("original_run_id"),
+            resumed_from_run_id=raw.get("resumed_from_run_id"),
+            resume_source_failed_step=raw.get("resume_source_failed_step"),
+        )
+
+    @staticmethod
+    def _deserialize_planned_step(raw: Dict[str, Any]) -> PlannedStep:
+        return PlannedStep(
+            name=raw["name"],
+            mutable=raw["mutable"],
+            idempotent=raw["idempotent"],
+            completion_probe=raw["completion_probe"],
+            partial_recovery=raw["partial_recovery"],
+            installation_id=raw["installation_id"],
+            excludes=tuple(Path(item) for item in raw.get("excludes", [])),
+        )
+
+    @classmethod
+    def _deserialize_migration_plan(cls, raw: Any) -> MigrationPlan | None:
+        if raw is None:
+            return None
+        installations = tuple(
+            WordPressInstallation(
+                installation_id=item["installation_id"],
+                path=Path(item["path"]),
+                app_root=Path(item["app_root"]),
+                domain=item["domain"],
+                instance_name=item["instance_name"],
+                document_root=Path(item["document_root"]),
+                environment=Environment(item["environment"]),
+                relative_nested_path=Path(item["relative_nested_path"])
+                if item.get("relative_nested_path")
+                else None,
+                parent_installation=item.get("parent_installation"),
+                children=tuple(item.get("children", [])),
+            )
+            for item in raw.get("installations", [])
+        )
+        pending = tuple(
+            PendingOperation(
+                PendingOperationType(item["operation_type"]),
+                item["parameters"],
+                item["reason"],
+                item.get("completed", False),
+            )
+            for item in raw.get("pending_operations", [])
+        )
+        return MigrationPlan(
+            installation_id=raw["installation_id"],
+            source_environment=Environment(raw["source_environment"]),
+            destination_environment=Environment(raw["destination_environment"]),
+            source_server=raw["source_server"],
+            database_endpoint=raw.get("database_endpoint"),
+            installations=installations,
+            steps=tuple(cls._deserialize_planned_step(item) for item in raw.get("steps", [])),
+            pending_operations=pending,
         )
 
     def save_checkpoint(

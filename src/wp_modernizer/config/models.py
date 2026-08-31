@@ -15,11 +15,14 @@ class ServerConfig(BaseModel):
     private_key: Optional[Path] = None
     password_secret: Optional[str] = None
     host_key_policy: Literal["strict", "accept-new"] = "strict"
+    known_hosts_file: Optional[Path] = None
 
     @model_validator(mode="after")
     def password_required_for_compatibility(self) -> "ServerConfig":
         if self.authentication == "password" and not self.password_secret:
             raise ValueError("a autenticação por senha requer password_secret")
+        if self.authentication == "password" and self.private_key is not None:
+            raise ValueError("a autenticação por senha não utiliza private_key")
         return self
 
 
