@@ -53,6 +53,8 @@ class DatabasePort(DatabaseRegistry, Protocol):
 
 
 class WordPressPort(Protocol):
+    def get_site_url(self, path: Path, run_id: str) -> str: ...
+
     def get_config(self, path: Path, name: str, run_id: str) -> str: ...
 
     def search_replace(

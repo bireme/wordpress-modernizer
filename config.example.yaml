@@ -1,4 +1,5 @@
 state_directory: ./state
+organizational_domain: bireme.org
 allowed_app_roots:
   - /home/apps
 servers:
@@ -26,6 +27,9 @@ installations:
     source_path: /home/apps/example.org/wp-main/htdocs
     destination_path: /home/apps/example.org/wp-main-test/htdocs
     destination_environment: test
+    # Omitido no caso convencional: https://boletin.bireme.org vira
+    # https://boletin.teste.bireme.org. Para uma exceção, declare explicitamente:
+    # test_url: https://destino-excepcional.example.org
     allowed_database_endpoints: [test-db-example]
     database_aliases: []
     core_checkpoints: []

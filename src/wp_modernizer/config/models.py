@@ -1,9 +1,10 @@
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
+from pydantic import AnyHttpUrl, BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from wp_modernizer.domain.enums import Environment
+from wp_modernizer.domain.test_url import OrganizationalTestUrlPolicy
 
 
 class ServerConfig(BaseModel):
@@ -41,6 +42,7 @@ class InstallationConfig(BaseModel):
     source_path: Path
     destination_path: Path
     destination_environment: Environment = Environment.TEST
+    test_url: Optional[AnyHttpUrl] = None
     allowed_database_endpoints: List[str]
     database_aliases: List[str] = Field(default_factory=list)
     database_override: Optional[str] = None
@@ -51,6 +53,13 @@ class InstallationConfig(BaseModel):
     def destination_is_test(cls, value: Environment) -> Environment:
         if value is not Environment.TEST:
             raise ValueError("destination_environment deve ser test")
+        return value
+
+    @field_validator("test_url")
+    @classmethod
+    def test_url_is_https(cls, value: Optional[AnyHttpUrl]) -> Optional[AnyHttpUrl]:
+        if value is not None and value.scheme != "https":
+            raise ValueError("test_url deve usar HTTPS")
         return value
 
 
@@ -70,6 +79,7 @@ class ObservabilityConfig(BaseModel):
 
 class ApplicationConfig(BaseModel):
     state_directory: Path = Path("state")
+    organizational_domain: str = "bireme.org"
     allowed_app_roots: List[Path]
     servers: Dict[str, ServerConfig]
     databases: Dict[str, DatabaseConfig]
@@ -77,6 +87,11 @@ class ApplicationConfig(BaseModel):
     database_overrides: Dict[str, str] = Field(default_factory=dict)
     managed_plugins: List[ManagedPluginConfig] = Field(default_factory=list)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
+
+    @field_validator("organizational_domain")
+    @classmethod
+    def organizational_domain_is_valid(cls, value: str) -> str:
+        return OrganizationalTestUrlPolicy(value).organizational_domain
 
     @field_validator("allowed_app_roots")
     @classmethod

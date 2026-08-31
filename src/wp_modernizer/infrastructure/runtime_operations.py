@@ -10,6 +10,7 @@ from wp_modernizer.domain.enums import Environment, PendingOperationType, StepSt
 from wp_modernizer.domain.errors import InfrastructureError, UnsafeOperationError
 from wp_modernizer.domain.models import PlannedStep, StepResult
 from wp_modernizer.domain.path_parser import InstallationPathParser
+from wp_modernizer.domain.test_url import OrganizationalTestUrlPolicy
 
 
 class RuntimeOperations:
@@ -238,10 +239,10 @@ class RuntimeOperations:
         )
         if pending is None:
             return self._ok(step_name, False, "nenhum search-replace pendente")
-        old_url = pending.parameters.get("old_url", "")
-        new_url = pending.parameters.get("new_url", "")
-        if not old_url or not new_url or "runtime" in old_url or "configured" in new_url:
-            return self._ok(step_name, False, "search-replace ainda depende de valores descobertos")
+        old_url = self._wordpress.get_site_url(path, run_id)
+        new_url = OrganizationalTestUrlPolicy(
+            pending.parameters.get("organizational_domain", "")
+        ).resolve(old_url, pending.parameters.get("test_url") or None)
         output = self._wordpress.search_replace(
             path, old_url, new_url, dry_run=False, multisite=False, run_id=run_id
         )

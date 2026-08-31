@@ -12,6 +12,24 @@ class WPCLIAdapter:
         self._runner = runner
         self._binary = binary
 
+    def get_site_url(self, path: Path, run_id: str) -> str:
+        result = self._runner.run(
+            [
+                self._binary,
+                f"--path={path}",
+                "--skip-plugins",
+                "--skip-themes",
+                "option",
+                "get",
+                "siteurl",
+            ],
+            timeout=60,
+            correlation_id=run_id,
+        )
+        if result.return_code != 0:
+            raise WordPressUnavailableError(result.stderr)
+        return result.stdout.strip()
+
     def get_config(self, path: Path, name: str, run_id: str) -> str:
         result = self._runner.run(
             [self._binary, f"--path={path}", "config", "get", name],
