@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Tuple
 
 from wp_modernizer.application.ports import DatabasePort, FileTransferPort, WordPressPort
 from wp_modernizer.domain.database import DatabaseLocator, SuffixDatabaseNamingStrategy
 from wp_modernizer.domain.enums import Environment, PendingOperationType, StepStatus
-from wp_modernizer.domain.errors import InfrastructureError, UnsafeOperationError
+from wp_modernizer.domain.errors import (
+    ConfigurationError,
+    InfrastructureError,
+    UnsafeOperationError,
+    WordPressUnavailableError,
+)
 from wp_modernizer.domain.models import PlannedStep, StepResult
 from wp_modernizer.domain.path_parser import InstallationPathParser
 from wp_modernizer.domain.test_url import OrganizationalTestUrlPolicy
@@ -239,14 +245,50 @@ class RuntimeOperations:
         )
         if pending is None:
             return self._ok(step_name, False, "nenhum search-replace pendente")
-        old_url = self._wordpress.get_site_url(path, run_id)
-        new_url = OrganizationalTestUrlPolicy(
-            pending.parameters.get("organizational_domain", "")
-        ).resolve(old_url, pending.parameters.get("test_url") or None)
-        output = self._wordpress.search_replace(
-            path, old_url, new_url, dry_run=False, multisite=False, run_id=run_id
+        explicit_url = pending.parameters.get("test_url") or None
+        try:
+            old_url = self._wordpress.get_site_url(path, run_id)
+            if explicit_url is not None and old_url.rstrip("/") == explicit_url.rstrip("/"):
+                return self._failed(
+                    step_name, "search-replace recusado: URLs de origem e destino coincidem"
+                )
+            new_url = OrganizationalTestUrlPolicy(
+                pending.parameters.get("organizational_domain", "")
+            ).resolve(old_url, explicit_url)
+            if old_url.rstrip("/") == new_url.rstrip("/"):
+                return self._failed(
+                    step_name, "search-replace recusado: URLs de origem e destino coincidem"
+                )
+            multisite = self._wordpress.is_multisite(path, run_id)
+            changed_count = self._wordpress.search_replace(
+                path, old_url, new_url, dry_run=False, multisite=multisite, run_id=run_id
+            )
+        except ConfigurationError as exc:
+            return self._failed(step_name, str(exc))
+        except UnsafeOperationError:
+            return self._failed(
+                step_name, "search-replace recusado por apontar para o ambiente de produção"
+            )
+        except WordPressUnavailableError:
+            return self._failed(step_name, "search-replace falhou; a cópia de TESTE foi preservada")
+
+        manifest = context.get("manifest")
+        if manifest is not None:
+            for index, operation in enumerate(manifest.pending_operations):
+                if (
+                    operation.operation_type is pending.operation_type
+                    and operation.parameters == pending.parameters
+                    and not operation.completed
+                ):
+                    manifest.pending_operations[index] = replace(operation, completed=True)
+                    break
+        return StepResult(
+            step_name,
+            StepStatus.SUCCEEDED,
+            changed_count > 0,
+            f"search-replace concluído: {changed_count} substituições",
+            {"replacements": float(changed_count)},
         )
-        return StepResult(step_name, StepStatus.SUCCEEDED, True, output)
 
     @staticmethod
     def _ok(name: str, changed: bool, message: str) -> StepResult:

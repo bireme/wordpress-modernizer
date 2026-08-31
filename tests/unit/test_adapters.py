@@ -211,15 +211,16 @@ def test_mysql_widget_snapshot_preserves_binary_and_rejects_bad_table() -> None:
 
 
 def test_wpcli_adapter_dry_run_multisite_and_failure() -> None:
-    runner = FakeCommandRunner([FakeCommandResult(stdout="changed")])
+    runner = FakeCommandRunner([FakeCommandResult(stdout="7\n")])
     adapter = WPCLIAdapter(runner)
     assert (
         adapter.search_replace(
             Path("/site"), "https://old", "https://new", dry_run=True, multisite=True, run_id="r"
         )
-        == "changed"
+        == 7
     )
     assert "--dry-run" in runner.calls[0] and "--network" in runner.calls[0]
+    assert "--precise" in runner.calls[0] and "--format=count" in runner.calls[0]
     with pytest.raises(Exception, match="failed"):
         WPCLIAdapter(FakeCommandRunner([FakeCommandResult(1, stderr="failed")])).update(
             Path("/site"), ["core", "update"], "r"
@@ -233,6 +234,29 @@ def test_wpcli_reads_site_url_without_loading_plugins_or_themes() -> None:
     assert "--skip-themes" in runner.calls[0]
 
 
+def test_wpcli_detects_multisite_from_wordpress_constant() -> None:
+    enabled = FakeCommandRunner([FakeCommandResult(stdout="true\n")])
+    disabled = FakeCommandRunner([FakeCommandResult(return_code=1)])
+    assert WPCLIAdapter(enabled).is_multisite(Path("/site"), "r") is True
+    assert WPCLIAdapter(disabled).is_multisite(Path("/site"), "r") is False
+
+
+def test_wpcli_search_replace_failure_does_not_expose_stderr() -> None:
+    adapter = WPCLIAdapter(
+        FakeCommandRunner([FakeCommandResult(return_code=1, stderr="database-password")])
+    )
+    with pytest.raises(Exception) as failure:
+        adapter.search_replace(
+            Path("/site"),
+            "https://old",
+            "https://new",
+            dry_run=False,
+            multisite=False,
+            run_id="r",
+        )
+    assert "database-password" not in str(failure.value)
+
+
 def test_runtime_search_replace_derives_test_url_from_discovered_site_url() -> None:
     class WordPress:
         replaced: tuple[str, str] | None = None
@@ -241,10 +265,14 @@ def test_runtime_search_replace_derives_test_url_from_discovered_site_url() -> N
             del path, run_id
             return "https://boletin.bireme.org/wordpress"
 
-        def search_replace(self, path: Path, old_url: str, new_url: str, **kwargs: Any) -> str:
+        def is_multisite(self, path: Path, run_id: str) -> bool:
+            del path, run_id
+            return False
+
+        def search_replace(self, path: Path, old_url: str, new_url: str, **kwargs: Any) -> int:
             del path, kwargs
             self.replaced = (old_url, new_url)
-            return "changed"
+            return 4
 
     wordpress = WordPress()
     operations = RuntimeOperations(
