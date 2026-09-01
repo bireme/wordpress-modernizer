@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 import click
 
-from wp_modernizer.application.ports import CommandRunner, SecretProvider
+from wp_modernizer.application.ports import CommandRunner, ExecutableLocator, SecretProvider
 from wp_modernizer.application.service import ModernizerService
 from wp_modernizer.config.loader import load_config
 from wp_modernizer.config.models import ApplicationConfig
@@ -38,6 +38,7 @@ def build_service(
     runner: CommandRunner | None = None,
     secrets: SecretProvider | None = None,
     ssh_client_factory: Callable[[], Any] | None = None,
+    executable_locator: ExecutableLocator | None = None,
 ) -> ModernizerService:
     """Composition root da aplicação; dependências opcionais mantêm os testes sem subprocessos."""
     command_runner = runner or SubprocessCommandRunner()
@@ -76,6 +77,7 @@ def build_service(
             database=mysql,
             wordpress=wpcli,
             database_endpoints=database_endpoints,
+            executable_locator=executable_locator,
         ),
         JsonStateStore(config.state_directory),
         filesystem,

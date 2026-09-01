@@ -1,5 +1,23 @@
 # Requisitos de implantação ainda necessários
 
+## Executáveis verificados no preflight
+
+O conjunto é derivado da operação e das etapas que realmente serão executadas:
+
+| Capability | Executável | Quando é obrigatória |
+|---|---|---|
+| `PHP_AVAILABLE` | `php` | diagnóstico operacional e fluxos que usam WP-CLI |
+| `WPCLI_AVAILABLE` | `wp` | operações WordPress |
+| `MYSQL_AVAILABLE` | `mysql` | inspeção, importação e proteção do banco |
+| `MYSQLDUMP_AVAILABLE` | `mysqldump` | cópia real do banco |
+| `SSH_AVAILABLE` | `ssh` | cópia real com autenticação por chave |
+| `RSYNC_AVAILABLE` | `rsync` | cópia real com autenticação por chave |
+| `GIT_AVAILABLE` | `git` | atualização real de plugins gerenciados configurados |
+
+Etapas mutáveis omitidas por `--dry-run` não acrescentam dependências. O transporte SFTP por
+senha usa Paramiko e não exige `ssh` nem `rsync`. Uma capability obrigatória ausente interrompe a
+operação antes da criação do run e identifica seu nome no erro.
+
 | Pergunta | Motivo | Formato esperado | Impacto se ausente |
 |---|---|---|---|
 | Quais são as raízes permitidas das aplicações? | delimitar caminhos destrutivos | lista YAML de caminhos absolutos | substituição desabilitada |
