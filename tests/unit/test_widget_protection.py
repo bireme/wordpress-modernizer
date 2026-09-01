@@ -175,9 +175,7 @@ def test_explicit_restore_restores_and_revalidates_reference_snapshot() -> None:
 def test_incomplete_explicit_restore_fails_and_preserves_remaining_diff() -> None:
     before = snapshot(option("widget_text", b"before"))
     after = snapshot(option("widget_text", b"after"))
-    _, result, manifest, databases = execute_validation(
-        before, after, restore=True, restored=after
-    )
+    _, result, manifest, databases = execute_validation(before, after, restore=True, restored=after)
 
     assert result.status is StepStatus.FAILED
     assert result.metrics == {
@@ -321,9 +319,7 @@ def test_resume_restores_preserved_divergence_only_when_explicitly_requested() -
     )
 
     failed = service.execute(Operation.UPDATE, "site", dry_run=False)
-    resumed = service.resume(
-        "site", failed.run_id, dry_run=False, restore_widgets=True
-    )
+    resumed = service.resume("site", failed.run_id, dry_run=False, restore_widgets=True)
 
     assert resumed.status is RunStatus.SUCCEEDED
     assert resumed.widget_snapshot == reference
