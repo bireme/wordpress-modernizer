@@ -12,7 +12,7 @@ from tests.fakes.core import (
 from wp_modernizer.application.service import ModernizerService
 from wp_modernizer.config.models import ApplicationConfig, ManagedPluginConfig
 from wp_modernizer.domain.enums import HealthStatus, ManagedPluginStatus, Operation, RunStatus
-from wp_modernizer.domain.errors import ResumeConsistencyError
+from wp_modernizer.domain.errors import ResumeConsistencyError, StateStoreUnavailableError
 from wp_modernizer.domain.models import PlannedStep, RunManifest
 
 
@@ -67,6 +67,37 @@ def service(operations=None, state=None) -> ModernizerService:
         FakeIds(),
         operations or FakeOperations(),
     )
+
+
+class UnavailableStateStore(FakeStateStore):
+    def preflight(self) -> None:
+        super().preflight()
+        raise StateStoreUnavailableError("state_directory indisponível")
+
+    def load_manifest(self, installation_id: str, run_id: str) -> RunManifest:
+        raise AssertionError("resume não deve ler estado após falha do preflight")
+
+
+@pytest.mark.parametrize("command", ["execute", "resume"])
+def test_mutable_operation_stops_before_probe_or_state_load_when_store_is_unavailable(
+    command: str,
+) -> None:
+    state = UnavailableStateStore()
+    probe = FakeProbe([health(HealthStatus.HEALTHY)])
+    operations = FakeOperations()
+    app = ModernizerService(
+        config(), probe, state, FakeFileSystem(), FakeClock(), FakeIds(), operations
+    )
+
+    with pytest.raises(StateStoreUnavailableError):
+        if command == "execute":
+            app.execute(Operation.UPDATE, "parent", dry_run=False)
+        else:
+            app.resume("parent", "old-run", dry_run=False)
+
+    assert state.preflight_calls == 1
+    assert probe.calls == []
+    assert operations.calls == []
 
 
 def test_diagnose_and_inventory_degrade_fields_independently() -> None:

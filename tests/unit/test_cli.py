@@ -74,3 +74,15 @@ def test_unknown_installation_is_operational_error(tmp_path: Path) -> None:
     result = CliRunner().invoke(cli, ["--config", str(config), "plan", "missing"])
     assert result.exit_code != 0
     assert "Instalação desconhecida" in result.output
+
+
+def test_mutable_command_rejects_unusable_state_directory_before_dependencies(
+    tmp_path: Path,
+) -> None:
+    config = write_config(tmp_path)
+    (tmp_path / "state").write_text("not a directory")
+
+    result = CliRunner().invoke(cli, ["--config", str(config), "update", "site"])
+
+    assert result.exit_code != 0
+    assert "state_directory não está acessível" in result.output

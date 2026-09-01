@@ -102,6 +102,10 @@ class FakeStateStore:
     def __init__(self) -> None:
         self.manifests: Dict[tuple, RunManifest] = {}
         self.checkpoints: List[str] = []
+        self.preflight_calls = 0
+
+    def preflight(self) -> None:
+        self.preflight_calls += 1
 
     def create_run(self, manifest: RunManifest) -> None:
         self.manifests[(manifest.installation_id, manifest.run_id)] = manifest

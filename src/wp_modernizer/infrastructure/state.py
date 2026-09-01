@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict
+from uuid import uuid4
 
 from wp_modernizer.domain.enums import (
     Capability,
@@ -16,6 +18,7 @@ from wp_modernizer.domain.enums import (
     StepCapability,
     StepStatus,
 )
+from wp_modernizer.domain.errors import StateStoreUnavailableError
 from wp_modernizer.domain.models import (
     CapabilityReport,
     ManagedPlugin,
@@ -33,6 +36,30 @@ from wp_modernizer.domain.widgets import WidgetOption, WidgetSnapshot
 class JsonStateStore:
     def __init__(self, root: Path) -> None:
         self._root = root
+
+    def preflight(self) -> None:
+        """Comprova criação, escrita e leitura usando o mesmo padrão atômico do store."""
+        probe = self._root / f".wp-modernizer-preflight-{uuid4().hex}.json"
+        temporary = probe.with_suffix(".tmp")
+        token = uuid4().hex
+        try:
+            self._root.mkdir(parents=True, exist_ok=True)
+            if not self._root.is_dir():
+                raise NotADirectoryError(str(self._root))
+            self._atomic_json(probe, {"token": token})
+            payload = json.loads(probe.read_text(encoding="utf-8"))
+            if payload != {"token": token}:
+                raise OSError("conteúdo lido diverge do conteúdo gravado")
+        except (OSError, ValueError) as exc:
+            raise StateStoreUnavailableError(
+                "state_directory não está acessível como diretório ou não permite "
+                f"criação, escrita e leitura: {self._root}"
+            ) from exc
+        finally:
+            with suppress(OSError):
+                temporary.unlink()
+            with suppress(OSError):
+                probe.unlink()
 
     def create_run(self, manifest: RunManifest) -> None:
         directory = self._run_dir(manifest.installation_id, manifest.run_id)
