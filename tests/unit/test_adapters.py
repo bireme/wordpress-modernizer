@@ -228,9 +228,7 @@ def test_mysql_widget_snapshot_preserves_binary_and_rejects_bad_table() -> None:
     snapshot = MySQLAdapter({"db": database()}, Secrets(), runner).snapshot_widgets("db", "site")
     assert snapshot.options[0].value == b"\x00\xff"
     snapshot_query = next(
-        argument
-        for argument in runner.calls[1]
-        if argument.startswith("SELECT option_name")
+        argument for argument in runner.calls[1] if argument.startswith("SELECT option_name")
     )
     assert "sidebars_widgets" in snapshot_query
     assert "widget\\_%" in snapshot_query
