@@ -8,6 +8,7 @@ from typing import Any, Dict
 from wp_modernizer.domain.enums import (
     Environment,
     HealthStatus,
+    ManagedPluginStatus,
     Operation,
     PendingOperationType,
     RunStatus,
@@ -15,6 +16,8 @@ from wp_modernizer.domain.enums import (
 )
 from wp_modernizer.domain.models import (
     CapabilityReport,
+    ManagedPlugin,
+    ManagedPluginResult,
     MigrationPlan,
     PendingOperation,
     PlannedStep,
@@ -22,6 +25,7 @@ from wp_modernizer.domain.models import (
     StepResult,
     WordPressInstallation,
 )
+from wp_modernizer.domain.widgets import WidgetOption, WidgetSnapshot
 
 
 class JsonStateStore:
@@ -76,6 +80,7 @@ class JsonStateStore:
             wpcli_reduced_bootstrap=raw.get("wpcli_reduced_bootstrap", False),
             fatal_errors=raw.get("fatal_errors", []),
             widget_diff=raw.get("widget_diff", []),
+            widget_snapshot=self._deserialize_widget_snapshot(raw.get("widget_snapshot")),
             filesystem_fingerprint=raw.get("filesystem_fingerprint"),
             finished_at=raw.get("finished_at"),
             planned_steps=[
@@ -87,6 +92,30 @@ class JsonStateStore:
             original_run_id=raw.get("original_run_id"),
             resumed_from_run_id=raw.get("resumed_from_run_id"),
             resume_source_failed_step=raw.get("resume_source_failed_step"),
+            managed_plugins=[
+                ManagedPlugin(
+                    item["slug"],
+                    item["repository"],
+                    item["branch"],
+                    item["strategy"],
+                    item["dirty_policy"],
+                )
+                for item in raw.get("managed_plugins", [])
+            ],
+            managed_plugin_results=[
+                ManagedPluginResult(
+                    item["slug"],
+                    item["repository"],
+                    item["branch"],
+                    item["strategy"],
+                    item["dirty_policy"],
+                    ManagedPluginStatus(item["status"]),
+                    item["changed"],
+                    item["message"],
+                    item.get("revision"),
+                )
+                for item in raw.get("managed_plugin_results", [])
+            ],
         )
 
     @staticmethod
@@ -99,6 +128,20 @@ class JsonStateStore:
             partial_recovery=raw["partial_recovery"],
             installation_id=raw["installation_id"],
             excludes=tuple(Path(item) for item in raw.get("excludes", [])),
+        )
+
+    @staticmethod
+    def _deserialize_widget_snapshot(raw: Any) -> WidgetSnapshot | None:
+        if raw is None:
+            return None
+        return WidgetSnapshot.from_options(
+            WidgetOption(
+                table=item["table"],
+                name=item["name"],
+                value=bytes.fromhex(item["value"]),
+                autoload=item["autoload"],
+            )
+            for item in raw.get("options", [])
         )
 
     @classmethod
@@ -165,6 +208,8 @@ class JsonStateStore:
             return [cls._serialize(item) for item in value]
         if isinstance(value, Path):
             return str(value)
+        if isinstance(value, bytes):
+            return value.hex()
         return value
 
     @staticmethod

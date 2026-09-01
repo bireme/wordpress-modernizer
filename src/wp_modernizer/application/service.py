@@ -15,6 +15,7 @@ from wp_modernizer.application.ports import (
 from wp_modernizer.config.models import ApplicationConfig
 from wp_modernizer.domain.enums import (
     Environment,
+    ManagedPluginStatus,
     Operation,
     PendingOperationType,
     RunStatus,
@@ -25,7 +26,14 @@ from wp_modernizer.domain.errors import (
     ResumeConsistencyError,
     UnsafeOperationError,
 )
-from wp_modernizer.domain.models import MigrationPlan, PendingOperation, PlannedStep, RunManifest
+from wp_modernizer.domain.models import (
+    ManagedPlugin,
+    ManagedPluginResult,
+    MigrationPlan,
+    PendingOperation,
+    PlannedStep,
+    RunManifest,
+)
 from wp_modernizer.domain.path_parser import InstallationPathParser
 from wp_modernizer.domain.planning import MigrationPlanner
 from wp_modernizer.pipeline.runner import PipelineRunner
@@ -157,6 +165,19 @@ class ModernizerService:
         else:
             raise ConfigurationError(f"Operação de execução não suportada: {operation.value}")
         run_id = self._ids.new()
+        managed_plugins = [
+            ManagedPlugin(
+                plugin.slug,
+                plugin.repository,
+                plugin.branch,
+                plugin.strategy,
+                plugin.dirty_policy,
+            )
+            for plugin in self.config.managed_plugins
+        ]
+        managed_refresh_planned = any(
+            step.name == "managed_plugin_refresh" for step in planned_steps
+        )
         manifest = RunManifest(
             run_id,
             installation_id,
@@ -173,6 +194,24 @@ class ModernizerService:
             },
             recovery_data={},
             original_run_id=run_id,
+            managed_plugins=managed_plugins,
+            managed_plugin_results=(
+                [
+                    ManagedPluginResult(
+                        plugin.slug,
+                        plugin.repository,
+                        plugin.branch,
+                        plugin.strategy,
+                        plugin.dirty_policy,
+                        ManagedPluginStatus.PLANNED,
+                        False,
+                        "dry-run: substituição planejada, sem alteração",
+                    )
+                    for plugin in managed_plugins
+                ]
+                if dry_run and managed_refresh_planned
+                else []
+            ),
         )
         context = {
             "run_id": run_id,
@@ -188,7 +227,14 @@ class ModernizerService:
         steps = tuple(OperationStep(step, self._operations) for step in planned_steps)
         return self._runner.run(manifest, path, steps, context)
 
-    def resume(self, installation_id: str, run_id: str, dry_run: bool) -> RunManifest:
+    def resume(
+        self,
+        installation_id: str,
+        run_id: str,
+        dry_run: bool,
+        *,
+        restore_widgets: bool = False,
+    ) -> RunManifest:
         old = self._state.load_manifest(installation_id, run_id)
         original_steps = self._safe_resume_plan(old)
         path = self._installation(installation_id).destination_path
@@ -196,6 +242,10 @@ class ModernizerService:
         completed_count = self._completed_prefix(old, original_steps)
         remaining = original_steps[completed_count:]
         parameters = dict(old.execution_parameters or {})
+        # Restoring mutates the database and is authorized per invocation. A previous flag
+        # must never turn a later resume into an implicit restoration attempt.
+        parameters["restore_widgets"] = restore_widgets
+        managed_refresh_remaining = any(step.name == "managed_plugin_refresh" for step in remaining)
         new = RunManifest(
             self._ids.new(),
             installation_id,
@@ -207,6 +257,7 @@ class ModernizerService:
             pending_operations=list(old.pending_operations),
             last_successful_step=(old.steps[completed_count - 1].name if completed_count else None),
             widget_diff=list(old.widget_diff),
+            widget_snapshot=old.widget_snapshot,
             planned_steps=list(original_steps),
             migration_plan=old.migration_plan,
             execution_parameters=parameters,
@@ -214,6 +265,24 @@ class ModernizerService:
             original_run_id=old.original_run_id or old.run_id,
             resumed_from_run_id=old.run_id,
             resume_source_failed_step=old.failed_step,
+            managed_plugins=list(old.managed_plugins),
+            managed_plugin_results=(
+                [
+                    ManagedPluginResult(
+                        plugin.slug,
+                        plugin.repository,
+                        plugin.branch,
+                        plugin.strategy,
+                        plugin.dirty_policy,
+                        ManagedPluginStatus.PLANNED,
+                        False,
+                        "dry-run: substituição planejada, sem alteração",
+                    )
+                    for plugin in old.managed_plugins
+                ]
+                if dry_run and managed_refresh_remaining
+                else list(old.managed_plugin_results)
+            ),
         )
         return self._runner.run(
             new,

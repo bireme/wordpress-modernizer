@@ -1,7 +1,12 @@
 import pytest
 from pydantic import ValidationError
 
-from wp_modernizer.config.models import ApplicationConfig, DatabaseConfig, ServerConfig
+from wp_modernizer.config.models import (
+    ApplicationConfig,
+    DatabaseConfig,
+    ManagedPluginConfig,
+    ServerConfig,
+)
 
 
 def valid_config():
@@ -129,3 +134,9 @@ def test_password_authentication_accepts_secret_reference_and_rejects_private_ke
             password_secret="PASSWORD",
             private_key="/key",
         )
+
+
+@pytest.mark.parametrize("slug", ["../escape", "nested/plugin", ".", ""])
+def test_config_rejects_unsafe_plugin_slugs(slug: str) -> None:
+    with pytest.raises(ValidationError, match="slug"):
+        ManagedPluginConfig(slug=slug, repository="repo")

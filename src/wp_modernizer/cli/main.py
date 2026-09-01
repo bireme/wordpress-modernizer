@@ -18,6 +18,7 @@ from wp_modernizer.domain.errors import ModernizerError
 from wp_modernizer.domain.path_parser import InstallationPathParser
 from wp_modernizer.infrastructure.command import SubprocessCommandRunner
 from wp_modernizer.infrastructure.filesystem import LocalFileSystem
+from wp_modernizer.infrastructure.managed_plugins import ManagedPluginRefresher
 from wp_modernizer.infrastructure.mysql.adapter import MySQLAdapter
 from wp_modernizer.infrastructure.runtime_operations import RuntimeOperations
 from wp_modernizer.infrastructure.secrets import EnvironmentSecretProvider
@@ -65,6 +66,7 @@ def build_service(
         wpcli,
         InstallationPathParser(config.allowed_app_roots),
         database_overrides=config.database_overrides,
+        managed_plugins=ManagedPluginRefresher(filesystem, command_runner),
     )
     return ModernizerService(
         config,
@@ -212,15 +214,30 @@ for _operation in (Operation.MIGRATE, Operation.UPDATE, Operation.PIPELINE):
 @click.argument("installation_id")
 @click.option("--run-id", required=True)
 @click.option("--dry-run", "command_dry_run", is_flag=True)
+@click.option(
+    "--restore-widgets",
+    is_flag=True,
+    help="Restaura explicitamente o snapshot de widgets durante este resume.",
+)
 @click.option("--json", "as_json", is_flag=True)
 @click.pass_obj
 def resume(
-    context: Context, installation_id: str, run_id: str, command_dry_run: bool, as_json: bool
+    context: Context,
+    installation_id: str,
+    run_id: str,
+    command_dry_run: bool,
+    restore_widgets: bool,
+    as_json: bool,
 ) -> None:
     """Continua uma execução preservada após verificar o estado da intervenção manual."""
     try:
         _emit(
-            context.service.resume(installation_id, run_id, context.dry_run or command_dry_run),
+            context.service.resume(
+                installation_id,
+                run_id,
+                context.dry_run or command_dry_run,
+                restore_widgets=restore_widgets,
+            ),
             as_json,
         )
     except ModernizerError as exc:

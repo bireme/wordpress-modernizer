@@ -1,6 +1,7 @@
 import hashlib
 import os
 import shutil
+import tempfile
 from pathlib import Path
 
 
@@ -28,3 +29,12 @@ class LocalFileSystem:
 
     def remove_tree(self, path: Path) -> None:
         shutil.rmtree(path)
+
+    def is_symlink(self, path: Path) -> bool:
+        return path.is_symlink()
+
+    def create_temporary_directory(self, parent: Path, prefix: str) -> Path:
+        return Path(tempfile.mkdtemp(dir=parent, prefix=prefix))
+
+    def move(self, source: Path, destination: Path) -> None:
+        source.replace(destination)

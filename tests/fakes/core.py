@@ -44,6 +44,18 @@ class FakeFileSystem:
     def remove_tree(self, path: Path) -> None:
         self.removed.append(path)
 
+    def is_symlink(self, path: Path) -> bool:
+        return False
+
+    def create_temporary_directory(self, parent: Path, prefix: str) -> Path:
+        path = parent / f"{prefix}temporary"
+        self.files[path] = ""
+        return path
+
+    def move(self, source: Path, destination: Path) -> None:
+        if source in self.files:
+            self.files[destination] = self.files.pop(source)
+
 
 def health(status: HealthStatus) -> CapabilityReport:
     return CapabilityReport(
