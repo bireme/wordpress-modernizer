@@ -56,6 +56,9 @@ class PipelineRunner:
                     result, installation_id=step.installation_id or manifest.installation_id
                 )
             manifest.steps.append(result)
+            # This post-step probe is also the final validation when ``step`` is the
+            # last executable step.  Keep it here instead of representing that same
+            # probe as a separate, no-op health-check step in plans and manifests.
             after = self._probe.probe(installation_path)
             manifest.health_after = after.health
             self._record_diagnostics(manifest, after)

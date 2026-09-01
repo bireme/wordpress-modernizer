@@ -99,5 +99,4 @@ UPDATE_STEP_NAMES = (
     "plugin_languages",
     "theme_languages",
     "widget_validation",
-    "final_health_check",
 )

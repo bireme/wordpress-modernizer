@@ -26,9 +26,8 @@ def manifest(dry_run=False):
 def test_successful_pipeline_checkpoints_every_step() -> None:
     state = FakeStateStore()
     operations = FakeOperations()
-    runner = PipelineRunner(
-        FakeProbe([health(HealthStatus.HEALTHY)]), state, FakeFileSystem(), FakeClock()
-    )
+    probe = FakeProbe([health(HealthStatus.HEALTHY)])
+    runner = PipelineRunner(probe, state, FakeFileSystem(), FakeClock())
     result = runner.run(
         manifest(),
         Path("/site"),
@@ -37,7 +36,11 @@ def test_successful_pipeline_checkpoints_every_step() -> None:
     )
     assert result.status is RunStatus.SUCCEEDED
     assert result.last_successful_step == "two"
+    assert result.health_after is HealthStatus.HEALTHY
     assert state.checkpoints == ["one", "two"]
+    # One initial probe plus one post-step probe. The latter probe is the final
+    # validation; there is no synthetic final-health-check step.
+    assert probe.calls == [Path("/site"), Path("/site"), Path("/site")]
 
 
 def test_step_recovery_state_is_persisted_before_the_next_mutation() -> None:

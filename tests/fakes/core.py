@@ -66,8 +66,10 @@ def health(status: HealthStatus) -> CapabilityReport:
 class FakeProbe:
     def __init__(self, reports: List[CapabilityReport]) -> None:
         self.reports = reports
+        self.calls: List[Path] = []
 
     def probe(self, installation_path: Path) -> CapabilityReport:
+        self.calls.append(installation_path)
         return self.reports.pop(0) if len(self.reports) > 1 else self.reports[0]
 
 
