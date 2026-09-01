@@ -22,6 +22,7 @@ from wp_modernizer.domain.models import (
     StepResult,
     WordPressInstallation,
 )
+from wp_modernizer.domain.widgets import WidgetOption, WidgetSnapshot
 
 
 class JsonStateStore:
@@ -76,6 +77,7 @@ class JsonStateStore:
             wpcli_reduced_bootstrap=raw.get("wpcli_reduced_bootstrap", False),
             fatal_errors=raw.get("fatal_errors", []),
             widget_diff=raw.get("widget_diff", []),
+            widget_snapshot=self._deserialize_widget_snapshot(raw.get("widget_snapshot")),
             filesystem_fingerprint=raw.get("filesystem_fingerprint"),
             finished_at=raw.get("finished_at"),
             planned_steps=[
@@ -99,6 +101,20 @@ class JsonStateStore:
             partial_recovery=raw["partial_recovery"],
             installation_id=raw["installation_id"],
             excludes=tuple(Path(item) for item in raw.get("excludes", [])),
+        )
+
+    @staticmethod
+    def _deserialize_widget_snapshot(raw: Any) -> WidgetSnapshot | None:
+        if raw is None:
+            return None
+        return WidgetSnapshot.from_options(
+            WidgetOption(
+                table=item["table"],
+                name=item["name"],
+                value=bytes.fromhex(item["value"]),
+                autoload=item["autoload"],
+            )
+            for item in raw.get("options", [])
         )
 
     @classmethod
@@ -165,6 +181,8 @@ class JsonStateStore:
             return [cls._serialize(item) for item in value]
         if isinstance(value, Path):
             return str(value)
+        if isinstance(value, bytes):
+            return value.hex()
         return value
 
     @staticmethod

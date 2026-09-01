@@ -103,6 +103,14 @@ def test_update_executes_declared_pipeline() -> None:
     assert result.status is RunStatus.SUCCEEDED
     assert operations.calls[0] == "preflight"
     assert operations.calls[-1] == "final_health_check"
+    snapshot_index = operations.calls.index("snapshot")
+    for update_step in (
+        "core_update",
+        "core_database_update",
+        "third_party_plugin_update",
+        "theme_update",
+    ):
+        assert snapshot_index < operations.calls.index(update_step)
 
 
 def test_nested_wordpress_exclusion_reaches_executor_exactly_as_planned() -> None:
@@ -183,7 +191,7 @@ def test_interrupted_operation_resumes_the_same_original_plan(
     operations.contexts.clear()
     operations.fail_at = None
 
-    resumed = app.resume("parent", old.run_id, dry_run=False)
+    resumed = app.resume("parent", old.run_id, dry_run=False, restore_widgets=True)
 
     assert resumed.status is RunStatus.SUCCEEDED
     assert resumed.operation is operation
@@ -194,6 +202,29 @@ def test_interrupted_operation_resumes_the_same_original_plan(
     assert not set(completed_calls).intersection(operations.calls[:1])
     assert operations.contexts[0]["replace_existing"] is True
     assert operations.contexts[0]["restore_widgets"] is True
+
+
+def test_resume_does_not_reuse_previous_widget_restore_authorization() -> None:
+    state = FakeStateStore()
+    operations = FakeOperations(fail_at="core_update")
+    app = service(operations=operations, state=state)
+    old = app.execute(
+        Operation.UPDATE,
+        "parent",
+        dry_run=False,
+        restore_widgets=True,
+    )
+    operations.contexts.clear()
+    operations.calls.clear()
+    operations.fail_at = None
+
+    resumed = app.resume("parent", old.run_id, dry_run=False)
+
+    assert resumed.execution_parameters == {
+        "replace_existing": False,
+        "restore_widgets": False,
+    }
+    assert operations.contexts[0]["restore_widgets"] is False
 
 
 def test_resume_after_copy_files_does_not_copy_files_again() -> None:

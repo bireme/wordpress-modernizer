@@ -15,6 +15,7 @@ from .enums import (
     StepStatus,
 )
 from .errors import UnsafeOperationError
+from .widgets import WidgetSnapshot
 
 
 @dataclass(frozen=True)
@@ -136,6 +137,7 @@ class RunManifest:
     wpcli_reduced_bootstrap: bool = False
     fatal_errors: List[str] = field(default_factory=list)
     widget_diff: List[Dict[str, str]] = field(default_factory=list)
+    widget_snapshot: Optional[WidgetSnapshot] = None
     filesystem_fingerprint: Optional[str] = None
     finished_at: Optional[str] = None
     planned_steps: List[PlannedStep] = field(default_factory=list)

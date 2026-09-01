@@ -60,6 +60,10 @@ class PipelineRunner:
             manifest.health_after = after.health
             self._record_diagnostics(manifest, after)
             self._state.save_checkpoint(manifest.installation_id, manifest.run_id, result, after)
+            # Keep recovery data produced by the step durable before the next mutable step.
+            # In particular, the widget reference snapshot must survive an interruption in
+            # any subsequent WordPress update, not only a normally handled pipeline failure.
+            self._state.save_manifest(manifest)
             if result.status is not StepStatus.SUCCEEDED or self._regressed(
                 before.health, after.health
             ):

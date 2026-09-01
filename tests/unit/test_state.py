@@ -5,6 +5,7 @@ from wp_modernizer.domain.enums import Environment, HealthStatus, Operation, Run
 from wp_modernizer.domain.models import RunManifest, StepResult
 from wp_modernizer.domain.path_parser import InstallationPathParser
 from wp_modernizer.domain.planning import MigrationPlanner
+from wp_modernizer.domain.widgets import WidgetOption, WidgetSnapshot
 from wp_modernizer.infrastructure.state import JsonStateStore
 
 
@@ -13,11 +14,23 @@ def test_state_round_trip_and_layout(tmp_path: Path) -> None:
     manifest = RunManifest("run-id", "site", Operation.PIPELINE, RunStatus.RUNNING, "now", False)
     manifest.steps.append(StepResult("preflight", StepStatus.SUCCEEDED, False, "ok"))
     manifest.health_before = HealthStatus.HEALTHY
+    manifest.widget_snapshot = WidgetSnapshot.from_options(
+        [WidgetOption("wp_options", "widget_text", b"serialized\x00value", "yes")]
+    )
+    manifest.widget_diff = [
+        {
+            "event_type": "WIDGET_OPTION_CHANGED",
+            "table": "wp_options",
+            "option_name": "widget_text",
+        }
+    ]
     store.create_run(manifest)
     store.save_checkpoint("site", "run-id", manifest.steps[0], health(HealthStatus.HEALTHY))
     loaded = store.load_manifest("site", "run-id")
     assert loaded.operation is Operation.PIPELINE
     assert loaded.steps[0].status is StepStatus.SUCCEEDED
+    assert loaded.widget_snapshot == manifest.widget_snapshot
+    assert loaded.widget_diff == manifest.widget_diff
     assert (tmp_path / "site" / "runs" / "run-id" / "checkpoints").is_dir()
 
 

@@ -49,6 +49,10 @@ class DatabasePort(DatabaseRegistry, Protocol):
 
     def snapshot_widgets(self, endpoint_id: str, database: str) -> WidgetSnapshot: ...
 
+    def restore_widgets(
+        self, endpoint_id: str, database: str, snapshot: WidgetSnapshot, run_id: str
+    ) -> None: ...
+
     def wordpress_configuration(self, endpoint_id: str, database: str) -> Mapping[str, str]: ...
 
 

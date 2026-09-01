@@ -212,15 +212,30 @@ for _operation in (Operation.MIGRATE, Operation.UPDATE, Operation.PIPELINE):
 @click.argument("installation_id")
 @click.option("--run-id", required=True)
 @click.option("--dry-run", "command_dry_run", is_flag=True)
+@click.option(
+    "--restore-widgets",
+    is_flag=True,
+    help="Restaura explicitamente o snapshot de widgets durante este resume.",
+)
 @click.option("--json", "as_json", is_flag=True)
 @click.pass_obj
 def resume(
-    context: Context, installation_id: str, run_id: str, command_dry_run: bool, as_json: bool
+    context: Context,
+    installation_id: str,
+    run_id: str,
+    command_dry_run: bool,
+    restore_widgets: bool,
+    as_json: bool,
 ) -> None:
     """Continua uma execução preservada após verificar o estado da intervenção manual."""
     try:
         _emit(
-            context.service.resume(installation_id, run_id, context.dry_run or command_dry_run),
+            context.service.resume(
+                installation_id,
+                run_id,
+                context.dry_run or command_dry_run,
+                restore_widgets=restore_widgets,
+            ),
             as_json,
         )
     except ModernizerError as exc:
