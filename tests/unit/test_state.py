@@ -1,8 +1,20 @@
 from pathlib import Path
 
 from tests.fakes.core import health
-from wp_modernizer.domain.enums import Environment, HealthStatus, Operation, RunStatus, StepStatus
-from wp_modernizer.domain.models import RunManifest, StepResult
+from wp_modernizer.domain.enums import (
+    Environment,
+    HealthStatus,
+    ManagedPluginStatus,
+    Operation,
+    RunStatus,
+    StepStatus,
+)
+from wp_modernizer.domain.models import (
+    ManagedPlugin,
+    ManagedPluginResult,
+    RunManifest,
+    StepResult,
+)
 from wp_modernizer.domain.path_parser import InstallationPathParser
 from wp_modernizer.domain.planning import MigrationPlanner
 from wp_modernizer.domain.widgets import WidgetOption, WidgetSnapshot
@@ -24,6 +36,27 @@ def test_state_round_trip_and_layout(tmp_path: Path) -> None:
             "option_name": "widget_text",
         }
     ]
+    manifest.managed_plugins = [
+        ManagedPlugin(
+            "managed",
+            "https://example.invalid/repo.git",
+            "main",
+            "replace_from_git",
+            "skip",
+        )
+    ]
+    manifest.managed_plugin_results = [
+        ManagedPluginResult(
+            "managed",
+            "https://example.invalid/repo.git",
+            "main",
+            "replace_from_git",
+            "skip",
+            ManagedPluginStatus.SKIPPED,
+            False,
+            "skip explícito",
+        )
+    ]
     store.create_run(manifest)
     store.save_checkpoint("site", "run-id", manifest.steps[0], health(HealthStatus.HEALTHY))
     loaded = store.load_manifest("site", "run-id")
@@ -31,6 +64,8 @@ def test_state_round_trip_and_layout(tmp_path: Path) -> None:
     assert loaded.steps[0].status is StepStatus.SUCCEEDED
     assert loaded.widget_snapshot == manifest.widget_snapshot
     assert loaded.widget_diff == manifest.widget_diff
+    assert loaded.managed_plugins == manifest.managed_plugins
+    assert loaded.managed_plugin_results == manifest.managed_plugin_results
     assert (tmp_path / "site" / "runs" / "run-id" / "checkpoints").is_dir()
 
 

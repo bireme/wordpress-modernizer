@@ -8,6 +8,7 @@ from typing import Any, Dict
 from wp_modernizer.domain.enums import (
     Environment,
     HealthStatus,
+    ManagedPluginStatus,
     Operation,
     PendingOperationType,
     RunStatus,
@@ -15,6 +16,8 @@ from wp_modernizer.domain.enums import (
 )
 from wp_modernizer.domain.models import (
     CapabilityReport,
+    ManagedPlugin,
+    ManagedPluginResult,
     MigrationPlan,
     PendingOperation,
     PlannedStep,
@@ -89,6 +92,30 @@ class JsonStateStore:
             original_run_id=raw.get("original_run_id"),
             resumed_from_run_id=raw.get("resumed_from_run_id"),
             resume_source_failed_step=raw.get("resume_source_failed_step"),
+            managed_plugins=[
+                ManagedPlugin(
+                    item["slug"],
+                    item["repository"],
+                    item["branch"],
+                    item["strategy"],
+                    item["dirty_policy"],
+                )
+                for item in raw.get("managed_plugins", [])
+            ],
+            managed_plugin_results=[
+                ManagedPluginResult(
+                    item["slug"],
+                    item["repository"],
+                    item["branch"],
+                    item["strategy"],
+                    item["dirty_policy"],
+                    ManagedPluginStatus(item["status"]),
+                    item["changed"],
+                    item["message"],
+                    item.get("revision"),
+                )
+                for item in raw.get("managed_plugin_results", [])
+            ],
         )
 
     @staticmethod

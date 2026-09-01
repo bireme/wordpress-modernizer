@@ -10,8 +10,8 @@ from tests.fakes.core import (
     health,
 )
 from wp_modernizer.application.service import ModernizerService
-from wp_modernizer.config.models import ApplicationConfig
-from wp_modernizer.domain.enums import HealthStatus, Operation, RunStatus
+from wp_modernizer.config.models import ApplicationConfig, ManagedPluginConfig
+from wp_modernizer.domain.enums import HealthStatus, ManagedPluginStatus, Operation, RunStatus
 from wp_modernizer.domain.errors import ResumeConsistencyError
 from wp_modernizer.domain.models import PlannedStep, RunManifest
 
@@ -95,6 +95,27 @@ def test_pipeline_dry_run_calls_no_operations() -> None:
     assert result.status is RunStatus.PLANNED
     assert operations.calls == []
     assert len(result.steps) > 10
+
+
+def test_update_dry_run_records_managed_plugin_plan_without_calling_operations() -> None:
+    operations = FakeOperations()
+    app = service(operations)
+    app.config.managed_plugins = [
+        ManagedPluginConfig(
+            slug="managed",
+            repository="https://example.invalid/plugin.git",
+            branch="stable",
+            strategy="replace_from_git",
+            dirty_policy="skip",
+        )
+    ]
+
+    result = app.execute(Operation.UPDATE, "parent", dry_run=True)
+
+    assert operations.calls == []
+    assert result.managed_plugins[0].branch == "stable"
+    assert result.managed_plugin_results[0].status is ManagedPluginStatus.PLANNED
+    assert result.managed_plugin_results[0].dirty_policy == "skip"
 
 
 def test_update_executes_declared_pipeline() -> None:

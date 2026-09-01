@@ -7,8 +7,11 @@ from typing import Any, Dict, Mapping, Optional, Protocol, Sequence, Set, Tuple
 from wp_modernizer.domain.models import (
     CapabilityReport,
     DatabaseProbeResult,
+    ManagedPlugin,
+    ManagedPluginResult,
     RunManifest,
     StepResult,
+    WordPressInstallation,
 )
 from wp_modernizer.domain.widgets import WidgetSnapshot
 
@@ -111,6 +114,21 @@ class FileSystem(Protocol):
     def fingerprint(self, path: Path) -> str: ...
 
     def remove_tree(self, path: Path) -> None: ...
+
+    def is_symlink(self, path: Path) -> bool: ...
+
+    def create_temporary_directory(self, parent: Path, prefix: str) -> Path: ...
+
+    def move(self, source: Path, destination: Path) -> None: ...
+
+
+class ManagedPluginPort(Protocol):
+    def refresh(
+        self,
+        installation: WordPressInstallation,
+        plugins: Sequence[ManagedPlugin],
+        run_id: str,
+    ) -> Tuple[ManagedPluginResult, ...]: ...
 
 
 class CapabilityProbePort(Protocol):

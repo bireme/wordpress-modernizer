@@ -9,6 +9,7 @@ from .enums import (
     DatabaseAvailabilityStatus,
     Environment,
     HealthStatus,
+    ManagedPluginStatus,
     Operation,
     PendingOperationType,
     RunStatus,
@@ -119,6 +120,28 @@ class StepResult:
     installation_id: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class ManagedPlugin:
+    slug: str
+    repository: str
+    branch: str
+    strategy: str
+    dirty_policy: str
+
+
+@dataclass(frozen=True)
+class ManagedPluginResult:
+    slug: str
+    repository: str
+    branch: str
+    strategy: str
+    dirty_policy: str
+    status: ManagedPluginStatus
+    changed: bool
+    message: str
+    revision: Optional[str] = None
+
+
 @dataclass
 class RunManifest:
     run_id: str
@@ -147,3 +170,5 @@ class RunManifest:
     original_run_id: Optional[str] = None
     resumed_from_run_id: Optional[str] = None
     resume_source_failed_step: Optional[str] = None
+    managed_plugins: List[ManagedPlugin] = field(default_factory=list)
+    managed_plugin_results: List[ManagedPluginResult] = field(default_factory=list)
