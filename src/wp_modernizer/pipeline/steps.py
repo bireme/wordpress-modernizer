@@ -88,8 +88,8 @@ def planned_update_steps(installation_id: str) -> tuple[PlannedStep, ...]:
 
 UPDATE_STEP_NAMES = (
     "preflight",
-    "snapshot",
     "pending_search_replace",
+    "snapshot",
     "core_update",
     "core_database_update",
     "managed_plugin_refresh",

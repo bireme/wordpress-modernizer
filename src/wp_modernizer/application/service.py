@@ -188,7 +188,14 @@ class ModernizerService:
         steps = tuple(OperationStep(step, self._operations) for step in planned_steps)
         return self._runner.run(manifest, path, steps, context)
 
-    def resume(self, installation_id: str, run_id: str, dry_run: bool) -> RunManifest:
+    def resume(
+        self,
+        installation_id: str,
+        run_id: str,
+        dry_run: bool,
+        *,
+        restore_widgets: bool = False,
+    ) -> RunManifest:
         old = self._state.load_manifest(installation_id, run_id)
         original_steps = self._safe_resume_plan(old)
         path = self._installation(installation_id).destination_path
@@ -196,6 +203,9 @@ class ModernizerService:
         completed_count = self._completed_prefix(old, original_steps)
         remaining = original_steps[completed_count:]
         parameters = dict(old.execution_parameters or {})
+        # Restoring mutates the database and is authorized per invocation. A previous flag
+        # must never turn a later resume into an implicit restoration attempt.
+        parameters["restore_widgets"] = restore_widgets
         new = RunManifest(
             self._ids.new(),
             installation_id,
@@ -207,6 +217,7 @@ class ModernizerService:
             pending_operations=list(old.pending_operations),
             last_successful_step=(old.steps[completed_count - 1].name if completed_count else None),
             widget_diff=list(old.widget_diff),
+            widget_snapshot=old.widget_snapshot,
             planned_steps=list(original_steps),
             migration_plan=old.migration_plan,
             execution_parameters=parameters,

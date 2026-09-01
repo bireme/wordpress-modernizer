@@ -1,3 +1,4 @@
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from tests.fakes.core import (
 from wp_modernizer.domain.enums import HealthStatus, Operation, RunStatus
 from wp_modernizer.domain.errors import ResumeConsistencyError
 from wp_modernizer.domain.models import RunManifest
+from wp_modernizer.domain.widgets import WidgetOption, WidgetSnapshot
 from wp_modernizer.pipeline.runner import PipelineRunner
 from wp_modernizer.pipeline.steps import OperationStep
 
@@ -36,6 +38,42 @@ def test_successful_pipeline_checkpoints_every_step() -> None:
     assert result.status is RunStatus.SUCCEEDED
     assert result.last_successful_step == "two"
     assert state.checkpoints == ["one", "two"]
+
+
+def test_step_recovery_state_is_persisted_before_the_next_mutation() -> None:
+    reference = WidgetSnapshot.from_options(
+        [WidgetOption("wp_options", "sidebars_widgets", b"reference", "yes")]
+    )
+
+    class RecordingState(FakeStateStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.saved: list[RunManifest] = []
+
+        def save_manifest(self, current: RunManifest) -> None:
+            self.saved.append(deepcopy(current))
+            super().save_manifest(current)
+
+    class SnapshotOperations(FakeOperations):
+        def execute(self, step_name, context):
+            if step_name == "snapshot":
+                context["manifest"].widget_snapshot = reference
+            return super().execute(step_name, context)
+
+    state = RecordingState()
+    current = manifest()
+    operations = SnapshotOperations(fail_at="core_update")
+    PipelineRunner(
+        FakeProbe([health(HealthStatus.HEALTHY)]), state, FakeFileSystem(), FakeClock()
+    ).run(
+        current,
+        Path("/site"),
+        [OperationStep("snapshot", operations), OperationStep("core_update", operations)],
+        {"manifest": current},
+    )
+
+    assert state.saved[0].widget_snapshot == reference
+    assert [step.name for step in state.saved[0].steps] == ["snapshot"]
 
 
 @pytest.mark.parametrize("failed", ["one", "two", "three"])
