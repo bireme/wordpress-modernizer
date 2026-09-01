@@ -10,6 +10,20 @@ um caminho absoluto de origem, um destino de TESTE absoluto e IDs permitidos de 
 banco de dados de teste. Apelidos e substituições exatas de bancos são explícitos. Por padrão,
 o modernizer opera somente sobre schemas previamente provisionados pela infraestrutura.
 
+## Diretório de estado
+
+`state_directory` sustenta o mecanismo de falha com preservação e o comando `resume`. Antes de
+uma execução real de `migrate`, `update`, `pipeline` ou `resume`, o modernizer cria o diretório
+quando ele ainda não existe e comprova, com um arquivo temporário, que consegue gravar e ler o
+estado. A operação mutável é recusada antes das sondagens e das alterações no destino se essa
+comprovação falhar.
+
+Em container, **`state_directory` deve estar em um volume persistente**. Configure-o para um
+caminho montado que sobreviva à recriação, reinicialização ou substituição do container. Um
+caminho gravável dentro da camada efêmera do container pode passar no preflight, mas não oferece
+a durabilidade necessária para investigar uma falha e executar `resume`; o modernizer não tenta
+inferir genericamente a persistência do filesystem.
+
 ## Bancos de dados
 
 O nome da origem é sempre descoberto de `DB_NAME`. Quando ele segue exatamente

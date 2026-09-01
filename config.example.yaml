@@ -1,3 +1,4 @@
+# Em container, aponte para um volume persistente montado; este estado é necessário para resume.
 state_directory: ./state
 organizational_domain: bireme.org
 allowed_app_roots:

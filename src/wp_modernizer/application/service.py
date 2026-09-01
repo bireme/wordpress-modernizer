@@ -151,6 +151,10 @@ class ModernizerService:
         replace_existing: bool = False,
         restore_widgets: bool = False,
     ) -> RunManifest:
+        if not dry_run:
+            # Fail-and-preserve só é seguro quando o manifesto pode ser persistido antes
+            # de qualquer sondagem ou etapa capaz de alterar o destino.
+            self._state.preflight()
         item = self._installation(installation_id)
         path = item.destination_path
         migration_plan = self._migration_plan(installation_id)
@@ -242,6 +246,8 @@ class ModernizerService:
         *,
         restore_widgets: bool = False,
     ) -> RunManifest:
+        if not dry_run:
+            self._state.preflight()
         old = self._state.load_manifest(installation_id, run_id)
         original_steps = self._safe_resume_plan(old)
         path = self._installation(installation_id).destination_path

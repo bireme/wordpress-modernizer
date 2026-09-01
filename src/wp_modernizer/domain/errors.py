@@ -10,6 +10,10 @@ class InfrastructureError(ModernizerError):
     pass
 
 
+class StateStoreUnavailableError(InfrastructureError):
+    """O estado durável necessário para preservar e retomar uma execução está indisponível."""
+
+
 class CommandTimeoutError(InfrastructureError):
     pass
 
