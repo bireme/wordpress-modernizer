@@ -36,7 +36,9 @@ Os comandos que alteram estado são `migrate`, `update`, `pipeline` e `resume`. 
 `migrate --replace-existing` cria uma cópia de segurança da cópia de teste existente; em seguida,
 exige que todas as proteções de caminhos destrutivos sejam aprovadas. `diagnose`, `inventory` e
 `plan` são somente leitura. Todos os comandos aceitam `--json`; `--dry-run` é uma opção global e
-garante que as portas que alteram estado não sejam chamadas.
+garante que o alvo não seja alterado. Etapas somente leitura ficam `VALIDATED`, etapas mutáveis sem
+simulação segura ficam `PLANNED`, e apenas dry-runs nativos revisados explicitamente podem validar
+uma etapa mutável. Execuções reais bem-sucedidas ficam `EXECUTED`.
 
 Consulte [operações](docs/operations.md), [configuração](docs/configuration.md),
 [arquitetura](docs/architecture.md) e [recuperação](docs/recovery.md).

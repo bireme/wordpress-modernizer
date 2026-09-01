@@ -61,7 +61,8 @@ def test_command_level_dry_run_executes_no_mutating_adapter(tmp_path: Path) -> N
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["status"] == "PLANNED"
-    assert all(step["status"] == "PLANNED" for step in payload["steps"])
+    assert all(step["status"] in {"PLANNED", "VALIDATED"} for step in payload["steps"])
+    assert "EXECUTED" not in {step["status"] for step in payload["steps"]}
 
 
 def test_unknown_installation_is_operational_error(tmp_path: Path) -> None:

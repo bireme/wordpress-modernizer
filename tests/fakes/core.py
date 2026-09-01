@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from wp_modernizer.domain.enums import Capability, HealthStatus, StepStatus
+from wp_modernizer.domain.enums import Capability, HealthStatus, StepCapability, StepStatus
 from wp_modernizer.domain.models import CapabilityReport, ProbeResult, RunManifest, StepResult
 
 
@@ -107,10 +107,22 @@ class FakeOperations:
     def __init__(self, fail_at: Optional[str] = None) -> None:
         self.fail_at = fail_at
         self.calls: List[str] = []
+        self.validation_calls: List[str] = []
         self.contexts: List[Dict[str, Any]] = []
 
     def execute(self, step_name: str, context: Dict[str, Any]) -> StepResult:
         self.calls.append(step_name)
         self.contexts.append(context)
         status = StepStatus.FAILED if step_name == self.fail_at else StepStatus.SUCCEEDED
-        return StepResult(step_name, status, status is StepStatus.SUCCEEDED, step_name)
+        planned = context.get("planned_step")
+        changed = (
+            status is StepStatus.SUCCEEDED
+            and getattr(planned, "capability", None) is not StepCapability.READ_ONLY
+        )
+        return StepResult(step_name, status, changed, step_name)
+
+    def validate(self, step_name: str, context: Dict[str, Any]) -> StepResult:
+        self.validation_calls.append(step_name)
+        self.contexts.append(context)
+        status = StepStatus.FAILED if step_name == self.fail_at else StepStatus.VALIDATED
+        return StepResult(step_name, status, False, step_name)

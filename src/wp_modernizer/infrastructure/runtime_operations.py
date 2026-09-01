@@ -16,6 +16,7 @@ from wp_modernizer.domain.enums import (
     Environment,
     ManagedPluginStatus,
     PendingOperationType,
+    StepCapability,
     StepStatus,
 )
 from wp_modernizer.domain.errors import (
@@ -150,7 +151,7 @@ class RuntimeOperations:
         if step_name == "widget_validation":
             return self._validate_widgets(step_name, installation, path, context, run_id)
         if step_name == "pending_search_replace":
-            return self._search_replace(step_name, path, context, run_id)
+            return self._search_replace(step_name, path, context, run_id, dry_run=False)
         if step_name == "managed_plugin_refresh":
             return self._refresh_managed_plugins(
                 step_name, planned_step.installation_id, installation, path, context, run_id
@@ -164,6 +165,28 @@ class RuntimeOperations:
             output = self._wordpress.update(path, command, run_id)
             return StepResult(step_name, StepStatus.SUCCEEDED, True, output)
         raise UnsafeOperationError(f"Etapa mutável desconhecida: {step_name}")
+
+    def validate(self, step_name: str, context: Dict[str, Any]) -> StepResult:
+        """Execute only native dry-runs whose safety was explicitly reviewed here."""
+        planned_step = context.get("planned_step")
+        if not isinstance(planned_step, PlannedStep):
+            raise UnsafeOperationError(f"Etapa {step_name} não possui plano de validação")
+        if planned_step.capability is not StepCapability.MUTABLE_WITH_NATIVE_DRY_RUN:
+            raise UnsafeOperationError(f"Etapa {step_name} não possui dry-run nativo autorizado")
+        installation = context.get("installations", {}).get(
+            planned_step.installation_id, context["installation"]
+        )
+        if installation.destination_environment is not Environment.TEST:
+            raise UnsafeOperationError("Validações operacionais são proibidas fora de TESTE")
+        if step_name != "pending_search_replace":
+            raise UnsafeOperationError(f"Dry-run nativo desconhecido: {step_name}")
+        return self._search_replace(
+            step_name,
+            Path(installation.destination_path),
+            context,
+            str(context["run_id"]),
+            dry_run=True,
+        )
 
     def _snapshot_source_database(
         self,
@@ -430,7 +453,13 @@ class RuntimeOperations:
         return self._ok(step_name, True, "wp-config aponta para o banco do ambiente de teste")
 
     def _search_replace(
-        self, step_name: str, path: Path, context: Dict[str, Any], run_id: str
+        self,
+        step_name: str,
+        path: Path,
+        context: Dict[str, Any],
+        run_id: str,
+        *,
+        dry_run: bool,
     ) -> StepResult:
         plan = context.get("migration_plan")
         pending = next(
@@ -442,6 +471,13 @@ class RuntimeOperations:
             None,
         )
         if pending is None:
+            if dry_run:
+                return StepResult(
+                    step_name,
+                    StepStatus.VALIDATED,
+                    False,
+                    "nenhum search-replace pendente",
+                )
             return self._ok(step_name, False, "nenhum search-replace pendente")
         explicit_url = pending.parameters.get("test_url") or None
         try:
@@ -459,7 +495,7 @@ class RuntimeOperations:
                 )
             multisite = self._wordpress.is_multisite(path, run_id)
             changed_count = self._wordpress.search_replace(
-                path, old_url, new_url, dry_run=False, multisite=multisite, run_id=run_id
+                path, old_url, new_url, dry_run=dry_run, multisite=multisite, run_id=run_id
             )
         except ConfigurationError as exc:
             return self._failed(step_name, str(exc))
@@ -471,7 +507,7 @@ class RuntimeOperations:
             return self._failed(step_name, "search-replace falhou; a cópia de TESTE foi preservada")
 
         manifest = context.get("manifest")
-        if manifest is not None:
+        if manifest is not None and not dry_run:
             for index, operation in enumerate(manifest.pending_operations):
                 if (
                     operation.operation_type is pending.operation_type
@@ -480,9 +516,17 @@ class RuntimeOperations:
                 ):
                     manifest.pending_operations[index] = replace(operation, completed=True)
                     break
+        if dry_run:
+            return StepResult(
+                step_name,
+                StepStatus.VALIDATED,
+                False,
+                f"search-replace validado pelo dry-run nativo: {changed_count} substituições",
+                {"potential_replacements": float(changed_count)},
+            )
         return StepResult(
             step_name,
-            StepStatus.SUCCEEDED,
+            StepStatus.EXECUTED,
             changed_count > 0,
             f"search-replace concluído: {changed_count} substituições",
             {"replacements": float(changed_count)},

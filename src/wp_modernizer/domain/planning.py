@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Iterable, Tuple
 
-from .enums import Environment, PendingOperationType
+from .enums import Capability, Environment, PendingOperationType, StepCapability
 from .models import MigrationPlan, PendingOperation, PlannedStep, WordPressInstallation
 
 
@@ -35,6 +35,7 @@ class MigrationPlanner:
                     completion_probe="o manifesto e o resumo de conteúdo da cópia existem",
                     partial_recovery="criar uma nova cópia de segurança imutável",
                     installation_id=node.installation_id,
+                    capability=StepCapability.MUTABLE_WITHOUT_SAFE_DRY_RUN,
                 )
             )
             steps.append(
@@ -48,17 +49,29 @@ class MigrationPlanner:
                     ),
                     installation_id=node.installation_id,
                     excludes=(*descendants, Path("*.sql"), Path(".wp-modernizer")),
+                    capability=StepCapability.MUTABLE_WITHOUT_SAFE_DRY_RUN,
                 )
             )
             for name in ("snapshot_source_database", "copy_database", "write_test_db_config"):
+                capability = (
+                    StepCapability.READ_ONLY
+                    if name == "snapshot_source_database"
+                    else StepCapability.MUTABLE_WITHOUT_SAFE_DRY_RUN
+                )
                 steps.append(
                     PlannedStep(
                         name,
-                        True,
+                        capability is not StepCapability.READ_ONLY,
                         True,
                         "ponto de controle mais estado inspecionado",
                         "repetir com segurança",
                         node.installation_id,
+                        capability=capability,
+                        dry_run_requirements=(
+                            (Capability.WPCLI_AVAILABLE, Capability.DATABASE_AVAILABLE)
+                            if capability is StepCapability.READ_ONLY
+                            else ()
+                        ),
                     )
                 )
         if any(
@@ -74,6 +87,11 @@ class MigrationPlanner:
                     completion_probe="a URL de origem não permanece no banco de TESTE",
                     partial_recovery="preservar a cópia e repetir o search-replace com WP-CLI",
                     installation_id=installation_id,
+                    capability=StepCapability.MUTABLE_WITH_NATIVE_DRY_RUN,
+                    dry_run_requirements=(
+                        Capability.WPCLI_REDUCED_BOOTSTRAP,
+                        Capability.DATABASE_AVAILABLE,
+                    ),
                 )
             )
         return MigrationPlan(
