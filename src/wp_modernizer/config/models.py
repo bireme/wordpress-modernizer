@@ -99,6 +99,27 @@ class ManagedPluginConfig(BaseModel):
     strategy: Literal["replace_from_git"] = "replace_from_git"
     dirty_policy: Literal["abort", "skip"] = "abort"
 
+    @field_validator("slug")
+    @classmethod
+    def slug_is_a_safe_directory_name(cls, value: str) -> str:
+        normalized = value.strip()
+        safe_characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+        if (
+            not normalized
+            or normalized in {".", ".."}
+            or any(character not in safe_characters for character in normalized)
+        ):
+            raise ValueError("slug de plugin deve ser um nome de diretório simples e seguro")
+        return normalized
+
+    @field_validator("repository", "branch")
+    @classmethod
+    def git_values_are_not_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("repository e branch não podem ser vazios")
+        return normalized
+
 
 class ObservabilityConfig(BaseModel):
     json_stdout: bool = True

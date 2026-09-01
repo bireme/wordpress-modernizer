@@ -47,6 +47,13 @@ class StepStatus(str, Enum):
     PLANNED = "PLANNED"
 
 
+class ManagedPluginStatus(str, Enum):
+    PLANNED = "PLANNED"
+    REFRESHED = "REFRESHED"
+    SKIPPED = "SKIPPED"
+    FAILED_PRESERVED = "FAILED_PRESERVED"
+
+
 class RunStatus(str, Enum):
     PLANNED = "PLANNED"
     RUNNING = "RUNNING"

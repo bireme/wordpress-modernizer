@@ -9,12 +9,14 @@ from .enums import (
     DatabaseAvailabilityStatus,
     Environment,
     HealthStatus,
+    ManagedPluginStatus,
     Operation,
     PendingOperationType,
     RunStatus,
     StepStatus,
 )
 from .errors import UnsafeOperationError
+from .widgets import WidgetSnapshot
 
 
 @dataclass(frozen=True)
@@ -118,6 +120,28 @@ class StepResult:
     installation_id: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class ManagedPlugin:
+    slug: str
+    repository: str
+    branch: str
+    strategy: str
+    dirty_policy: str
+
+
+@dataclass(frozen=True)
+class ManagedPluginResult:
+    slug: str
+    repository: str
+    branch: str
+    strategy: str
+    dirty_policy: str
+    status: ManagedPluginStatus
+    changed: bool
+    message: str
+    revision: Optional[str] = None
+
+
 @dataclass
 class RunManifest:
     run_id: str
@@ -136,6 +160,7 @@ class RunManifest:
     wpcli_reduced_bootstrap: bool = False
     fatal_errors: List[str] = field(default_factory=list)
     widget_diff: List[Dict[str, str]] = field(default_factory=list)
+    widget_snapshot: Optional[WidgetSnapshot] = None
     filesystem_fingerprint: Optional[str] = None
     finished_at: Optional[str] = None
     planned_steps: List[PlannedStep] = field(default_factory=list)
@@ -145,3 +170,5 @@ class RunManifest:
     original_run_id: Optional[str] = None
     resumed_from_run_id: Optional[str] = None
     resume_source_failed_step: Optional[str] = None
+    managed_plugins: List[ManagedPlugin] = field(default_factory=list)
+    managed_plugin_results: List[ManagedPluginResult] = field(default_factory=list)

@@ -139,7 +139,8 @@ class MySQLAdapter:
             # Os nomes de tabela vêm apenas de SHOW TABLES e são filtrados antes da interpolação.
             sql = (
                 f"SELECT option_name,HEX(option_value),autoload FROM `{table}` "  # noqa: S608
-                "WHERE option_name='sidebars_widgets' OR option_name LIKE 'widget\\_%' "
+                "WHERE option_name='sidebars_widgets' "
+                "OR option_name LIKE 'widget\\_%' ESCAPE '\\\\' "
                 "OR option_name IN ('template','stylesheet') ORDER BY option_name"
             )
             for line in self._query(endpoint_id, sql, database).splitlines():
@@ -149,6 +150,50 @@ class MySQLAdapter:
                         WidgetOption(table, fields[0], bytes.fromhex(fields[1]), fields[2])
                     )
         return WidgetSnapshot.from_options(options)
+
+    def restore_widgets(
+        self, endpoint_id: str, database: str, snapshot: WidgetSnapshot, run_id: str
+    ) -> None:
+        endpoint = self.get_database(endpoint_id)
+        if endpoint.environment is not Environment.TEST:
+            raise UnsafeOperationError("Restauração de widgets é proibida fora de TESTE")
+        if database not in self.list_schemas(endpoint_id):
+            raise DatabaseNotFoundError(
+                f"O schema de TESTE {database!r} não existe; restauração recusada"
+            )
+
+        current = self.snapshot_widgets(endpoint_id, database)
+        tables = sorted({item.table for item in (*snapshot.options, *current.options)})
+        desired = {
+            table: [item for item in snapshot.options if item.table == table] for table in tables
+        }
+        statements = ["START TRANSACTION"]
+        for table in tables:
+            if not re.fullmatch(r"[A-Za-z0-9_]+", table):
+                raise InfrastructureError("O snapshot contém um identificador de tabela inseguro")
+            statements.append(
+                f"DELETE FROM `{table}` WHERE option_name='sidebars_widgets' "  # noqa: S608
+                "OR option_name LIKE 'widget\\_%' ESCAPE '\\\\' "
+                "OR option_name IN ('template','stylesheet')"
+            )
+            if desired[table]:
+                values = ",".join(
+                    "("
+                    + ",".join(
+                        (
+                            self._binary_literal(item.name.encode("utf-8")),
+                            self._binary_literal(item.value),
+                            self._binary_literal(item.autoload.encode("utf-8")),
+                        )
+                    )
+                    + ")"
+                    for item in desired[table]
+                )
+                statements.append(
+                    f"INSERT INTO `{table}` (option_name,option_value,autoload) VALUES {values}"  # noqa: S608
+                )
+        statements.append("COMMIT")
+        self._execute_script(endpoint_id, database, ";".join(statements), run_id)
 
     def wordpress_configuration(self, endpoint_id: str, database: str) -> Mapping[str, str]:
         endpoint = self.get_database(endpoint_id)
@@ -184,6 +229,32 @@ class MySQLAdapter:
             argv.extend(["--execute", sql])
             result = self._runner.run(argv, timeout=60)
         return result
+
+    def _execute_script(self, endpoint_id: str, database: str, sql: str, run_id: str) -> None:
+        endpoint = self.get_database(endpoint_id)
+        script_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
+                script_path = Path(handle.name)
+                handle.write(sql)
+            os.chmod(script_path, 0o600)
+            with self._defaults_file(endpoint) as defaults:
+                result = self._runner.run(
+                    [
+                        self._mysql,
+                        f"--defaults-extra-file={defaults}",
+                        "--batch",
+                        "--raw",
+                        database,
+                    ],
+                    stdin_path=script_path,
+                    timeout=60,
+                    correlation_id=run_id,
+                )
+        finally:
+            if script_path is not None:
+                script_path.unlink(missing_ok=True)
+        self._ensure_success(result.return_code, result.stderr)
 
     @staticmethod
     def _probe_result(status: DatabaseAvailabilityStatus) -> DatabaseProbeResult:
@@ -233,6 +304,10 @@ class MySQLAdapter:
             .replace("\t", "\\t")
         )
         return f'"{escaped}"'
+
+    @staticmethod
+    def _binary_literal(value: bytes) -> str:
+        return f"X'{value.hex()}'"
 
     @staticmethod
     def _ensure_success(return_code: int, stderr: str) -> None:

@@ -29,6 +29,7 @@ from wp_modernizer.domain.errors import (
     UnsafeOperationError,
 )
 from wp_modernizer.domain.models import PendingOperation, PlannedStep
+from wp_modernizer.domain.widgets import WidgetOption, WidgetSnapshot
 from wp_modernizer.infrastructure.filesystem import LocalFileSystem
 from wp_modernizer.infrastructure.mysql.adapter import MySQLAdapter
 from wp_modernizer.infrastructure.runtime_operations import RuntimeOperations
@@ -226,9 +227,57 @@ def test_mysql_widget_snapshot_preserves_binary_and_rejects_bad_table() -> None:
     )
     snapshot = MySQLAdapter({"db": database()}, Secrets(), runner).snapshot_widgets("db", "site")
     assert snapshot.options[0].value == b"\x00\xff"
+    snapshot_query = next(
+        argument for argument in runner.calls[1] if argument.startswith("SELECT option_name")
+    )
+    assert "sidebars_widgets" in snapshot_query
+    assert "widget\\_%" in snapshot_query
+    assert "template" in snapshot_query and "stylesheet" in snapshot_query
     bad = FakeCommandRunner([FakeCommandResult(stdout="bad-name_options\n")])
     with pytest.raises(InfrastructureError, match="identificador de tabela inseguro"):
         MySQLAdapter({"db": database()}, Secrets(), bad).snapshot_widgets("db", "site")
+
+
+def test_mysql_restores_existing_test_widget_snapshot_transactionally() -> None:
+    class ScriptRunner(FakeCommandRunner):
+        script = ""
+
+        def run(self, argv, **kwargs):
+            stdin_path = kwargs.get("stdin_path")
+            if stdin_path is not None:
+                self.script = stdin_path.read_text()
+            return super().run(argv, **kwargs)
+
+    reference = WidgetSnapshot.from_options(
+        [WidgetOption("wp_options", "widget_text", b"serialized\x00reference", "yes")]
+    )
+    runner = ScriptRunner(
+        [
+            FakeCommandResult(stdout="site\n"),
+            FakeCommandResult(stdout="wp_options\n"),
+            FakeCommandResult(stdout="widget_text\t6166746572\tyes\n"),
+            FakeCommandResult(),
+        ]
+    )
+    MySQLAdapter({"db": database()}, Secrets(), runner).restore_widgets(
+        "db", "site", reference, "run-1"
+    )
+    assert "START TRANSACTION" in runner.script and "COMMIT" in runner.script
+    assert "DELETE FROM `wp_options`" in runner.script
+    assert "INSERT INTO `wp_options`" in runner.script
+    assert reference.options[0].value.hex() in runner.script
+    assert reference.options[0].value.hex() not in " ".join(runner.calls[-1])
+    assert runner.calls[-1][-1] == "site"
+
+
+def test_mysql_never_restores_widgets_in_production() -> None:
+    production = database().model_copy(update={"environment": Environment.PRODUCTION})
+    runner = FakeCommandRunner()
+    with pytest.raises(UnsafeOperationError, match="fora de TESTE"):
+        MySQLAdapter({"db": production}, Secrets(), runner).restore_widgets(
+            "db", "site", WidgetSnapshot.from_options([]), "run-1"
+        )
+    assert runner.calls == []
 
 
 def test_wpcli_adapter_dry_run_multisite_and_failure() -> None:
