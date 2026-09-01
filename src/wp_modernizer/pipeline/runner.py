@@ -5,7 +5,13 @@ from pathlib import Path
 from typing import Any, Dict, Iterable
 
 from wp_modernizer.application.ports import CapabilityProbePort, Clock, FileSystem, StateStore
-from wp_modernizer.domain.enums import Capability, HealthStatus, RunStatus, StepStatus
+from wp_modernizer.domain.enums import (
+    Capability,
+    HealthStatus,
+    RunStatus,
+    StepCapability,
+    StepStatus,
+)
 from wp_modernizer.domain.errors import ResumeConsistencyError
 from wp_modernizer.domain.models import CapabilityReport, RunManifest, StepResult
 
@@ -40,7 +46,22 @@ class PipelineRunner:
         manifest.status = RunStatus.RUNNING
         self._state.create_run(manifest)
         for step in steps:
-            if manifest.dry_run and step.mutable:
+            missing_requirements = tuple(
+                capability for capability in step.dry_run_requirements if not before.has(capability)
+            )
+            if manifest.dry_run and missing_requirements:
+                missing = ", ".join(item.value for item in missing_requirements)
+                manifest.steps.append(
+                    StepResult(
+                        step.name,
+                        StepStatus.PLANNED,
+                        False,
+                        f"dry-run: validação indisponível; capacidades ausentes: {missing}",
+                        installation_id=step.installation_id or manifest.installation_id,
+                    )
+                )
+                continue
+            if manifest.dry_run and step.capability is StepCapability.MUTABLE_WITHOUT_SAFE_DRY_RUN:
                 result = StepResult(
                     step.name,
                     StepStatus.PLANNED,
@@ -50,7 +71,20 @@ class PipelineRunner:
                 )
                 manifest.steps.append(result)
                 continue
-            result = step.execute(context)
+            if manifest.dry_run and step.capability is StepCapability.MUTABLE_WITH_NATIVE_DRY_RUN:
+                result = step.validate(context)
+                if result.changed or result.status is StepStatus.EXECUTED:
+                    raise RuntimeError(
+                        f"Validação nativa {step.name} declarou execução ou mutação em dry-run"
+                    )
+            else:
+                result = step.execute(context)
+                if manifest.dry_run and result.status is StepStatus.EXECUTED:
+                    if result.changed:
+                        raise RuntimeError(
+                            f"Etapa somente leitura {step.name} declarou mutação em dry-run"
+                        )
+                    result = replace(result, status=StepStatus.VALIDATED)
             if result.installation_id is None:
                 result = replace(
                     result, installation_id=step.installation_id or manifest.installation_id
@@ -67,9 +101,8 @@ class PipelineRunner:
             # In particular, the widget reference snapshot must survive an interruption in
             # any subsequent WordPress update, not only a normally handled pipeline failure.
             self._state.save_manifest(manifest)
-            if result.status is not StepStatus.SUCCEEDED or self._regressed(
-                before.health, after.health
-            ):
+            expected_status = StepStatus.VALIDATED if manifest.dry_run else StepStatus.EXECUTED
+            if result.status is not expected_status or self._regressed(before.health, after.health):
                 manifest.failed_step = step.name
                 manifest.status = RunStatus.UPDATE_FAILED_PRESERVED
                 manifest.finished_at = self._clock.now_iso()
@@ -78,7 +111,12 @@ class PipelineRunner:
                 return manifest
             manifest.last_successful_step = step.name
             before = after
-        manifest.status = RunStatus.SUCCEEDED if not manifest.dry_run else RunStatus.PLANNED
+        if not manifest.dry_run:
+            manifest.status = RunStatus.EXECUTED
+        elif all(step.status is StepStatus.VALIDATED for step in manifest.steps):
+            manifest.status = RunStatus.VALIDATED
+        else:
+            manifest.status = RunStatus.PLANNED
         manifest.finished_at = self._clock.now_iso()
         manifest.filesystem_fingerprint = self._filesystem.fingerprint(installation_path)
         self._state.save_manifest(manifest)
