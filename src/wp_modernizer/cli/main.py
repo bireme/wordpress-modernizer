@@ -103,7 +103,7 @@ class Context:
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Garante que etapas mutáveis sejam planejadas, mas não executadas.",
+    help="Não altera o alvo; valida somente leituras e dry-runs nativos autorizados.",
 )
 @click.version_option()
 @click.pass_context
@@ -167,7 +167,7 @@ def _mutable_command(operation: Operation) -> Any:
         "--dry-run",
         "command_dry_run",
         is_flag=True,
-        help="Planeja sem alterar estado (também disponível globalmente).",
+        help="Não altera o alvo e valida apenas operações seguras (também disponível globalmente).",
     )
     @click.option(
         "--replace-existing",

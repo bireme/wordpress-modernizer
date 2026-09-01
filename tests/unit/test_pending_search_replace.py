@@ -11,6 +11,7 @@ from wp_modernizer.domain.enums import (
     Operation,
     PendingOperationType,
     RunStatus,
+    StepCapability,
     StepStatus,
 )
 from wp_modernizer.domain.errors import UnsafeOperationError, WordPressUnavailableError
@@ -208,3 +209,26 @@ def test_success_marks_pending_operation_complete() -> None:
     ]
     operation(wordpress).execute("pending_search_replace", context)
     assert manifest.pending_operations[0].completed is True
+
+
+def test_native_dry_run_validates_without_completing_pending_operation() -> None:
+    manifest = RunManifest("run-1", "site", Operation.PIPELINE, RunStatus.RUNNING, "now", True)
+    wordpress = RecordingWordPress(replacements=7)
+    context = execution_context(manifest=manifest)
+    context["planned_step"] = PlannedStep(
+        "pending_search_replace",
+        True,
+        True,
+        "",
+        "",
+        "site",
+        capability=StepCapability.MUTABLE_WITH_NATIVE_DRY_RUN,
+    )
+
+    result = operation(wordpress).validate("pending_search_replace", context)
+
+    assert result.status is StepStatus.VALIDATED
+    assert result.changed is False
+    assert result.metrics == {"potential_replacements": 7.0}
+    assert wordpress.search_calls[0]["dry_run"] is True
+    assert manifest.pending_operations[0].completed is False

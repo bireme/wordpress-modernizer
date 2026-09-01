@@ -11,9 +11,15 @@ from tests.fakes.core import (
     FakeStateStore,
     health,
 )
-from wp_modernizer.domain.enums import HealthStatus, Operation, RunStatus
+from wp_modernizer.domain.enums import (
+    HealthStatus,
+    Operation,
+    RunStatus,
+    StepCapability,
+    StepStatus,
+)
 from wp_modernizer.domain.errors import ResumeConsistencyError
-from wp_modernizer.domain.models import RunManifest
+from wp_modernizer.domain.models import PlannedStep, RunManifest, StepResult
 from wp_modernizer.domain.widgets import WidgetOption, WidgetSnapshot
 from wp_modernizer.pipeline.runner import PipelineRunner
 from wp_modernizer.pipeline.steps import OperationStep
@@ -26,9 +32,8 @@ def manifest(dry_run=False):
 def test_successful_pipeline_checkpoints_every_step() -> None:
     state = FakeStateStore()
     operations = FakeOperations()
-    runner = PipelineRunner(
-        FakeProbe([health(HealthStatus.HEALTHY)]), state, FakeFileSystem(), FakeClock()
-    )
+    probe = FakeProbe([health(HealthStatus.HEALTHY)])
+    runner = PipelineRunner(probe, state, FakeFileSystem(), FakeClock())
     result = runner.run(
         manifest(),
         Path("/site"),
@@ -37,7 +42,11 @@ def test_successful_pipeline_checkpoints_every_step() -> None:
     )
     assert result.status is RunStatus.SUCCEEDED
     assert result.last_successful_step == "two"
+    assert result.health_after is HealthStatus.HEALTHY
     assert state.checkpoints == ["one", "two"]
+    # One initial probe plus one post-step probe. The latter probe is the final
+    # validation; there is no synthetic final-health-check step.
+    assert probe.calls == [Path("/site"), Path("/site"), Path("/site")]
 
 
 def test_step_recovery_state_is_persisted_before_the_next_mutation() -> None:
@@ -109,6 +118,77 @@ def test_dry_run_never_calls_mutable_adapter() -> None:
     assert operations.calls == []
     assert result.status is RunStatus.PLANNED
     assert result.steps[0].message.startswith("dry-run")
+
+
+def test_dry_run_executes_read_only_step_as_validation() -> None:
+    operations = FakeOperations()
+    planned = PlannedStep(
+        "inspect",
+        False,
+        True,
+        "",
+        "",
+        "site",
+        capability=StepCapability.READ_ONLY,
+    )
+    result = PipelineRunner(
+        FakeProbe([health(HealthStatus.HEALTHY)]),
+        FakeStateStore(),
+        FakeFileSystem(),
+        FakeClock(),
+    ).run(manifest(True), Path("/site"), [OperationStep(planned, operations)], {})
+
+    assert operations.calls == ["inspect"]
+    assert result.steps[0].status is StepStatus.VALIDATED
+    assert result.status is RunStatus.VALIDATED
+
+
+def test_dry_run_uses_separate_native_validation_entrypoint() -> None:
+    operations = FakeOperations()
+    planned = PlannedStep(
+        "native",
+        True,
+        True,
+        "",
+        "",
+        "site",
+        capability=StepCapability.MUTABLE_WITH_NATIVE_DRY_RUN,
+    )
+    result = PipelineRunner(
+        FakeProbe([health(HealthStatus.HEALTHY)]),
+        FakeStateStore(),
+        FakeFileSystem(),
+        FakeClock(),
+    ).run(manifest(True), Path("/site"), [OperationStep(planned, operations)], {})
+
+    assert operations.calls == []
+    assert operations.validation_calls == ["native"]
+    assert result.steps[0].status is StepStatus.VALIDATED
+
+
+def test_dry_run_rejects_native_validation_that_claims_mutation() -> None:
+    class UnsafeValidation(FakeOperations):
+        def validate(self, step_name, context):
+            return StepResult(step_name, StepStatus.VALIDATED, True, "unsafe")
+
+    operations = UnsafeValidation()
+    planned = PlannedStep(
+        "native",
+        True,
+        True,
+        "",
+        "",
+        "site",
+        capability=StepCapability.MUTABLE_WITH_NATIVE_DRY_RUN,
+    )
+
+    with pytest.raises(RuntimeError, match="mutação em dry-run"):
+        PipelineRunner(
+            FakeProbe([health(HealthStatus.HEALTHY)]),
+            FakeStateStore(),
+            FakeFileSystem(),
+            FakeClock(),
+        ).run(manifest(True), Path("/site"), [OperationStep(planned, operations)], {})
 
 
 def test_resume_detects_manual_intervention() -> None:
