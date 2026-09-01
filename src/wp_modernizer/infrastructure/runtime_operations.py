@@ -143,7 +143,7 @@ class RuntimeOperations:
                 context.get("recovery_data", {}),
             )
 
-        if step_name in {"preflight", "final_health_check"}:
+        if step_name == "preflight":
             return self._ok(step_name, False, "ponto de controle de diagnóstico concluído")
         if step_name == "snapshot":
             return self._snapshot_widgets(step_name, installation, path, context, run_id)
