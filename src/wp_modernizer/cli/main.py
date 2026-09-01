@@ -18,6 +18,7 @@ from wp_modernizer.domain.errors import ModernizerError
 from wp_modernizer.domain.path_parser import InstallationPathParser
 from wp_modernizer.infrastructure.command import SubprocessCommandRunner
 from wp_modernizer.infrastructure.filesystem import LocalFileSystem
+from wp_modernizer.infrastructure.managed_plugins import ManagedPluginRefresher
 from wp_modernizer.infrastructure.mysql.adapter import MySQLAdapter
 from wp_modernizer.infrastructure.runtime_operations import RuntimeOperations
 from wp_modernizer.infrastructure.secrets import EnvironmentSecretProvider
@@ -65,6 +66,7 @@ def build_service(
         wpcli,
         InstallationPathParser(config.allowed_app_roots),
         database_overrides=config.database_overrides,
+        managed_plugins=ManagedPluginRefresher(filesystem, command_runner),
     )
     return ModernizerService(
         config,

@@ -5,9 +5,19 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Tuple
 
-from wp_modernizer.application.ports import DatabasePort, FileTransferPort, WordPressPort
+from wp_modernizer.application.ports import (
+    DatabasePort,
+    FileTransferPort,
+    ManagedPluginPort,
+    WordPressPort,
+)
 from wp_modernizer.domain.database import DatabaseLocator, ProductionTestDatabaseNamingStrategy
-from wp_modernizer.domain.enums import Environment, PendingOperationType, StepStatus
+from wp_modernizer.domain.enums import (
+    Environment,
+    ManagedPluginStatus,
+    PendingOperationType,
+    StepStatus,
+)
 from wp_modernizer.domain.errors import (
     AmbiguousDatabaseError,
     ConfigurationError,
@@ -43,12 +53,14 @@ class RuntimeOperations:
         parser: InstallationPathParser,
         *,
         database_overrides: Dict[str, str] | None = None,
+        managed_plugins: ManagedPluginPort | None = None,
     ) -> None:
         self._files = files
         self._databases = databases
         self._wordpress = wordpress
         self._parser = parser
         self._database_overrides = database_overrides or {}
+        self._managed_plugins = managed_plugins
         self._database_runs: Dict[tuple[str, str], Dict[str, Any]] = {}
 
     def execute(self, step_name: str, context: Dict[str, Any]) -> StepResult:
@@ -140,9 +152,15 @@ class RuntimeOperations:
         if step_name == "pending_search_replace":
             return self._search_replace(step_name, path, context, run_id)
         if step_name == "managed_plugin_refresh":
-            return self._ok(step_name, False, "nenhuma atualização de plugin gerenciado solicitada")
+            return self._refresh_managed_plugins(
+                step_name, planned_step.installation_id, installation, path, context, run_id
+            )
         command = self._wp_commands.get(step_name)
         if command:
+            if step_name == "third_party_plugin_update":
+                managed = getattr(context.get("manifest"), "managed_plugins", ())
+                if managed:
+                    command = (*command, f"--exclude={','.join(item.slug for item in managed)}")
             output = self._wordpress.update(path, command, run_id)
             return StepResult(step_name, StepStatus.SUCCEEDED, True, output)
         raise UnsafeOperationError(f"Etapa mutável desconhecida: {step_name}")
@@ -194,6 +212,50 @@ class RuntimeOperations:
         }
         recovery_data[installation_id] = dict(self._database_runs[(run_id, installation_id)])
         return self._ok(step_name, False, "origem e destino MySQL resolvidos sem ambiguidade")
+
+    def _refresh_managed_plugins(
+        self,
+        step_name: str,
+        installation_id: str,
+        installation: Any,
+        path: Path,
+        context: Dict[str, Any],
+        run_id: str,
+    ) -> StepResult:
+        manifest = context.get("manifest")
+        plugins = getattr(manifest, "managed_plugins", ())
+        if manifest is None:
+            return self._failed(step_name, "manifesto ausente para registrar plugins gerenciados")
+        if not plugins:
+            manifest.managed_plugin_results = []
+            return self._ok(step_name, False, "nenhum plugin gerenciado configurado")
+        if self._managed_plugins is None:
+            return self._failed(step_name, "adapter local de plugins gerenciados não configurado")
+
+        parsed = self._parser.parse(
+            str(path), installation_id, installation.destination_environment
+        )
+        self._parser.assert_safe_destructive_target(path, parsed)
+        try:
+            results = self._managed_plugins.refresh(parsed, plugins, run_id)
+        except (InfrastructureError, UnsafeOperationError) as exc:
+            return self._failed(step_name, str(exc))
+        manifest.managed_plugin_results = list(results)
+        failed = next(
+            (item for item in results if item.status is ManagedPluginStatus.FAILED_PRESERVED),
+            None,
+        )
+        if failed is not None:
+            return self._failed(step_name, f"{failed.slug}: {failed.message}")
+        refreshed = sum(1 for item in results if item.changed)
+        skipped = sum(1 for item in results if item.status is ManagedPluginStatus.SKIPPED)
+        return StepResult(
+            step_name,
+            StepStatus.SUCCEEDED,
+            refreshed > 0,
+            f"plugins gerenciados: {refreshed} substituídos, {skipped} skips explícitos",
+            {"refreshed": float(refreshed), "skipped": float(skipped)},
+        )
 
     def _snapshot_widgets(
         self,

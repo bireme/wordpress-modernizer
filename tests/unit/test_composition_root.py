@@ -8,6 +8,7 @@ from wp_modernizer.cli.main import build_service
 from wp_modernizer.config.models import ApplicationConfig
 from wp_modernizer.domain.enums import HealthStatus, Operation, RunStatus, StepStatus
 from wp_modernizer.domain.models import PlannedStep, RunManifest
+from wp_modernizer.infrastructure.managed_plugins import ManagedPluginRefresher
 from wp_modernizer.infrastructure.mysql.adapter import MySQLAdapter
 from wp_modernizer.infrastructure.runtime_operations import RuntimeOperations
 from wp_modernizer.infrastructure.ssh import (
@@ -111,6 +112,7 @@ def test_composition_root_wires_config_secrets_and_all_runtime_adapters(tmp_path
         config.installations["site"].destination_path: ("test-db",)
     }
     assert isinstance(operations._wordpress, WPCLIAdapter)
+    assert isinstance(operations._managed_plugins, ManagedPluginRefresher)
 
     context = {
         "run_id": "run-1",
