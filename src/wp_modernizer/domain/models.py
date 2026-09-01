@@ -13,6 +13,7 @@ from .enums import (
     Operation,
     PendingOperationType,
     RunStatus,
+    StepCapability,
     StepStatus,
 )
 from .errors import UnsafeOperationError
@@ -92,6 +93,20 @@ class PlannedStep:
     partial_recovery: str
     installation_id: str
     excludes: Tuple[Path, ...] = ()
+    capability: Optional[StepCapability] = None
+    dry_run_requirements: Tuple[Capability, ...] = ()
+
+    def __post_init__(self) -> None:
+        capability = self.capability
+        if capability is None:
+            capability = (
+                StepCapability.MUTABLE_WITHOUT_SAFE_DRY_RUN
+                if self.mutable
+                else StepCapability.READ_ONLY
+            )
+            object.__setattr__(self, "capability", capability)
+        if self.mutable is (capability is StepCapability.READ_ONLY):
+            raise ValueError("mutable e capability descrevem capacidades incompatíveis")
 
 
 @dataclass(frozen=True)

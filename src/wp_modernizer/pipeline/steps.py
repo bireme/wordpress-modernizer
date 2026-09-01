@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Protocol
 
 from wp_modernizer.application.ports import MutableOperations
+from wp_modernizer.domain.enums import Capability, StepCapability
 from wp_modernizer.domain.models import PlannedStep, StepResult
 
 
@@ -12,6 +13,12 @@ class Step(Protocol):
 
     @property
     def mutable(self) -> bool: ...
+
+    @property
+    def capability(self) -> StepCapability: ...
+
+    @property
+    def dry_run_requirements(self) -> tuple[Capability, ...]: ...
 
     @property
     def idempotent(self) -> bool: ...
@@ -26,6 +33,8 @@ class Step(Protocol):
     def installation_id(self) -> str: ...
 
     def execute(self, context: Dict[str, Any]) -> StepResult: ...
+
+    def validate(self, context: Dict[str, Any]) -> StepResult: ...
 
 
 class OperationStep:
@@ -50,6 +59,15 @@ class OperationStep:
         return self.planned_step.mutable
 
     @property
+    def capability(self) -> StepCapability:
+        assert self.planned_step.capability is not None
+        return self.planned_step.capability
+
+    @property
+    def dry_run_requirements(self) -> tuple[Capability, ...]:
+        return self.planned_step.dry_run_requirements
+
+    @property
     def idempotent(self) -> bool:
         return self.planned_step.idempotent
 
@@ -70,15 +88,34 @@ class OperationStep:
         step_context["planned_step"] = self.planned_step
         return self.operations.execute(self.name, step_context)
 
+    def validate(self, context: Dict[str, Any]) -> StepResult:
+        step_context = dict(context)
+        step_context["planned_step"] = self.planned_step
+        return self.operations.validate(self.name, step_context)
+
 
 def planned_update_step(name: str, installation_id: str) -> PlannedStep:
+    capability = {
+        "preflight": StepCapability.READ_ONLY,
+        "snapshot": StepCapability.READ_ONLY,
+        "pending_search_replace": StepCapability.MUTABLE_WITH_NATIVE_DRY_RUN,
+    }.get(name, StepCapability.MUTABLE_WITHOUT_SAFE_DRY_RUN)
+    requirements = {
+        "snapshot": (Capability.WPCLI_AVAILABLE, Capability.DATABASE_AVAILABLE),
+        "pending_search_replace": (
+            Capability.WPCLI_REDUCED_BOOTSTRAP,
+            Capability.DATABASE_AVAILABLE,
+        ),
+    }.get(name, ())
     return PlannedStep(
         name=name,
-        mutable=True,
+        mutable=capability is not StepCapability.READ_ONLY,
         idempotent=True,
         completion_probe="ponto de controle e estado do destino inspecionado",
         partial_recovery="inspecionar e depois repetir ou pausar",
         installation_id=installation_id,
+        capability=capability,
+        dry_run_requirements=requirements,
     )
 
 
@@ -99,5 +136,4 @@ UPDATE_STEP_NAMES = (
     "plugin_languages",
     "theme_languages",
     "widget_validation",
-    "final_health_check",
 )

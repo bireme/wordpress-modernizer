@@ -6,12 +6,14 @@ from pathlib import Path
 from typing import Any, Dict
 
 from wp_modernizer.domain.enums import (
+    Capability,
     Environment,
     HealthStatus,
     ManagedPluginStatus,
     Operation,
     PendingOperationType,
     RunStatus,
+    StepCapability,
     StepStatus,
 )
 from wp_modernizer.domain.models import (
@@ -128,6 +130,10 @@ class JsonStateStore:
             partial_recovery=raw["partial_recovery"],
             installation_id=raw["installation_id"],
             excludes=tuple(Path(item) for item in raw.get("excludes", [])),
+            capability=(StepCapability(raw["capability"]) if raw.get("capability") else None),
+            dry_run_requirements=tuple(
+                Capability(item) for item in raw.get("dry_run_requirements", [])
+            ),
         )
 
     @staticmethod

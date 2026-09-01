@@ -41,10 +41,24 @@ class DatabaseAvailabilityStatus(str, Enum):
 class StepStatus(str, Enum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
-    SUCCEEDED = "SUCCEEDED"
+    EXECUTED = "EXECUTED"
+    SUCCEEDED = "EXECUTED"
     FAILED = "FAILED"
     SKIPPED = "SKIPPED"
     PLANNED = "PLANNED"
+    VALIDATED = "VALIDATED"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "StepStatus | None":
+        if value == "SUCCEEDED":
+            return cls.EXECUTED
+        return None
+
+
+class StepCapability(str, Enum):
+    READ_ONLY = "READ_ONLY"
+    MUTABLE_WITHOUT_SAFE_DRY_RUN = "MUTABLE_WITHOUT_SAFE_DRY_RUN"
+    MUTABLE_WITH_NATIVE_DRY_RUN = "MUTABLE_WITH_NATIVE_DRY_RUN"
 
 
 class ManagedPluginStatus(str, Enum):
@@ -56,11 +70,19 @@ class ManagedPluginStatus(str, Enum):
 
 class RunStatus(str, Enum):
     PLANNED = "PLANNED"
+    VALIDATED = "VALIDATED"
     RUNNING = "RUNNING"
-    SUCCEEDED = "SUCCEEDED"
+    EXECUTED = "EXECUTED"
+    SUCCEEDED = "EXECUTED"
     UPDATE_FAILED_PRESERVED = "UPDATE_FAILED_PRESERVED"
     PAUSED_FOR_MANUAL_REPAIR = "PAUSED_FOR_MANUAL_REPAIR"
     INCONSISTENT_AFTER_INTERVENTION = "INCONSISTENT_AFTER_INTERVENTION"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "RunStatus | None":
+        if value == "SUCCEEDED":
+            return cls.EXECUTED
+        return None
 
 
 class Operation(str, Enum):

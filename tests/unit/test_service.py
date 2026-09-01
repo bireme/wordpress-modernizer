@@ -89,15 +89,16 @@ def test_pipeline_does_not_execute_pending_search_replace_twice() -> None:
     assert [step.name for step in plan.planned_steps].count("pending_search_replace") == 1
 
 
-def test_pipeline_dry_run_calls_no_operations() -> None:
+def test_pipeline_dry_run_calls_only_read_and_native_validation_operations() -> None:
     operations = FakeOperations()
     result = service(operations).execute(Operation.PIPELINE, "parent", dry_run=True)
     assert result.status is RunStatus.PLANNED
-    assert operations.calls == []
+    assert operations.calls == ["preflight"]
+    assert operations.validation_calls == []
     assert len(result.steps) > 10
 
 
-def test_update_dry_run_records_managed_plugin_plan_without_calling_operations() -> None:
+def test_update_dry_run_records_managed_plugin_plan_without_mutating_operations() -> None:
     operations = FakeOperations()
     app = service(operations)
     app.config.managed_plugins = [
@@ -112,7 +113,8 @@ def test_update_dry_run_records_managed_plugin_plan_without_calling_operations()
 
     result = app.execute(Operation.UPDATE, "parent", dry_run=True)
 
-    assert operations.calls == []
+    assert operations.calls == ["preflight"]
+    assert operations.validation_calls == []
     assert result.managed_plugins[0].branch == "stable"
     assert result.managed_plugin_results[0].status is ManagedPluginStatus.PLANNED
     assert result.managed_plugin_results[0].dirty_policy == "skip"
@@ -123,7 +125,10 @@ def test_update_executes_declared_pipeline() -> None:
     result = service(operations).execute(Operation.UPDATE, "parent", dry_run=False)
     assert result.status is RunStatus.SUCCEEDED
     assert operations.calls[0] == "preflight"
-    assert operations.calls[-1] == "final_health_check"
+    assert operations.calls[-1] == "widget_validation"
+    assert "final_health_check" not in operations.calls
+    assert "final_health_check" not in [step.name for step in result.planned_steps]
+    assert "final_health_check" not in [step.name for step in result.steps]
     snapshot_index = operations.calls.index("snapshot")
     for update_step in (
         "core_update",

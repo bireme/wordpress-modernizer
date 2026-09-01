@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from wp_modernizer.domain.enums import Environment, PendingOperationType
+from wp_modernizer.domain.enums import Environment, PendingOperationType, StepCapability
 from wp_modernizer.domain.models import PendingOperation
 from wp_modernizer.domain.path_parser import InstallationPathParser
 from wp_modernizer.domain.planning import MigrationPlanner
@@ -54,3 +54,7 @@ def test_pending_search_replace_runs_after_test_database_is_prepared() -> None:
     )
     names = [step.name for step in plan.steps]
     assert names[-2:] == ["write_test_db_config", "pending_search_replace"]
+    capabilities = {step.name: step.capability for step in plan.steps}
+    assert capabilities["snapshot_source_database"] is StepCapability.READ_ONLY
+    assert capabilities["copy_database"] is StepCapability.MUTABLE_WITHOUT_SAFE_DRY_RUN
+    assert capabilities["pending_search_replace"] is StepCapability.MUTABLE_WITH_NATIVE_DRY_RUN
