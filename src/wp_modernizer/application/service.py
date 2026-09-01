@@ -4,6 +4,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, cast
 
+from wp_modernizer.application.dependencies import required_capabilities
 from wp_modernizer.application.ports import (
     CapabilityProbePort,
     Clock,
@@ -150,6 +151,10 @@ class ModernizerService:
         replace_existing: bool = False,
         restore_widgets: bool = False,
     ) -> RunManifest:
+        if not dry_run:
+            # Fail-and-preserve só é seguro quando o manifesto pode ser persistido antes
+            # de qualquer sondagem ou etapa capaz de alterar o destino.
+            self._state.preflight()
         item = self._installation(installation_id)
         path = item.destination_path
         migration_plan = self._migration_plan(installation_id)
@@ -225,7 +230,13 @@ class ModernizerService:
             "manifest": manifest,
         }
         steps = tuple(OperationStep(step, self._operations) for step in planned_steps)
-        return self._runner.run(manifest, path, steps, context)
+        return self._runner.run(
+            manifest,
+            path,
+            steps,
+            context,
+            required_capabilities(config=self.config, steps=planned_steps, dry_run=dry_run),
+        )
 
     def resume(
         self,
@@ -235,6 +246,8 @@ class ModernizerService:
         *,
         restore_widgets: bool = False,
     ) -> RunManifest:
+        if not dry_run:
+            self._state.preflight()
         old = self._state.load_manifest(installation_id, run_id)
         original_steps = self._safe_resume_plan(old)
         path = self._installation(installation_id).destination_path
@@ -300,6 +313,11 @@ class ModernizerService:
                 "resumed_from": run_id,
                 "manifest": new,
             },
+            required_capabilities(
+                config=self.config,
+                steps=remaining,
+                dry_run=dry_run,
+            ),
         )
 
     @staticmethod

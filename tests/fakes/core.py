@@ -26,6 +26,17 @@ class FakeCommandRunner:
         return self.results.pop(0) if self.results else FakeCommandResult()
 
 
+class FakeExecutableLocator:
+    def __init__(self, available: Optional[Sequence[str]] = None) -> None:
+        defaults = ("php", "wp", "ssh", "rsync", "mysql", "mysqldump", "git")
+        self.available = set(defaults if available is None else available)
+        self.calls: List[str] = []
+
+    def which(self, executable: str) -> Optional[str]:
+        self.calls.append(executable)
+        return f"/usr/bin/{executable}" if executable in self.available else None
+
+
 class FakeFileSystem:
     def __init__(self, files: Optional[Dict[Path, str]] = None, fingerprint: str = "same") -> None:
         self.files = files or {}
@@ -67,16 +78,34 @@ class FakeProbe:
     def __init__(self, reports: List[CapabilityReport]) -> None:
         self.reports = reports
         self.calls: List[Path] = []
+        self.requirements: List[set[Capability]] = []
 
-    def probe(self, installation_path: Path) -> CapabilityReport:
+    def probe(
+        self,
+        installation_path: Path,
+        required_capabilities: set[Capability] | None = None,
+    ) -> CapabilityReport:
         self.calls.append(installation_path)
-        return self.reports.pop(0) if len(self.reports) > 1 else self.reports[0]
+        required = required_capabilities or set()
+        self.requirements.append(required)
+        report = self.reports.pop(0) if len(self.reports) > 1 else self.reports[0]
+        present = {result.capability for result in report.results}
+        additions = tuple(
+            ProbeResult(capability, True, "fake disponível")
+            for capability in required
+            if capability not in present
+        )
+        return CapabilityReport((*report.results, *additions), report.health, report.fatal_errors)
 
 
 class FakeStateStore:
     def __init__(self) -> None:
         self.manifests: Dict[tuple, RunManifest] = {}
         self.checkpoints: List[str] = []
+        self.preflight_calls = 0
+
+    def preflight(self) -> None:
+        self.preflight_calls += 1
 
     def create_run(self, manifest: RunManifest) -> None:
         self.manifests[(manifest.installation_id, manifest.run_id)] = manifest

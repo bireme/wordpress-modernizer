@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Protocol, Sequence, Set, Tuple
 
+from wp_modernizer.domain.enums import Capability
 from wp_modernizer.domain.models import (
     CapabilityReport,
     DatabaseProbeResult,
@@ -106,6 +107,10 @@ class CommandRunner(Protocol):
     ) -> CommandResult: ...
 
 
+class ExecutableLocator(Protocol):
+    def which(self, executable: str) -> Optional[str]: ...
+
+
 class FileSystem(Protocol):
     def exists(self, path: Path) -> bool: ...
 
@@ -132,7 +137,11 @@ class ManagedPluginPort(Protocol):
 
 
 class CapabilityProbePort(Protocol):
-    def probe(self, installation_path: Path) -> CapabilityReport: ...
+    def probe(
+        self,
+        installation_path: Path,
+        required_capabilities: Set[Capability] | None = None,
+    ) -> CapabilityReport: ...
 
 
 class WidgetStore(Protocol):
@@ -142,6 +151,8 @@ class WidgetStore(Protocol):
 
 
 class StateStore(Protocol):
+    def preflight(self) -> None: ...
+
     def create_run(self, manifest: RunManifest) -> None: ...
 
     def save_manifest(self, manifest: RunManifest) -> None: ...

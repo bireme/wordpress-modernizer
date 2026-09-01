@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from tests.fakes.core import health
 from wp_modernizer.domain.enums import (
     Environment,
@@ -9,6 +11,7 @@ from wp_modernizer.domain.enums import (
     RunStatus,
     StepStatus,
 )
+from wp_modernizer.domain.errors import StateStoreUnavailableError
 from wp_modernizer.domain.models import (
     ManagedPlugin,
     ManagedPluginResult,
@@ -19,6 +22,57 @@ from wp_modernizer.domain.path_parser import InstallationPathParser
 from wp_modernizer.domain.planning import MigrationPlanner
 from wp_modernizer.domain.widgets import WidgetOption, WidgetSnapshot
 from wp_modernizer.infrastructure.state import JsonStateStore
+
+
+def test_state_preflight_creates_directory_and_proves_round_trip(tmp_path: Path) -> None:
+    root = tmp_path / "missing" / "state"
+
+    JsonStateStore(root).preflight()
+
+    assert root.is_dir()
+    assert list(root.iterdir()) == []
+
+
+def test_state_preflight_rejects_non_directory_path(tmp_path: Path) -> None:
+    root = tmp_path / "state"
+    root.write_text("not a directory")
+
+    with pytest.raises(StateStoreUnavailableError, match="state_directory não está acessível"):
+        JsonStateStore(root).preflight()
+
+
+def test_state_preflight_rejects_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "state"
+    original = Path.write_text
+
+    def deny_probe_write(path: Path, *args: object, **kwargs: object) -> int:
+        if path.parent == root and path.name.startswith(".wp-modernizer-preflight-"):
+            raise PermissionError("read-only")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", deny_probe_write)
+
+    with pytest.raises(StateStoreUnavailableError, match="escrita e leitura"):
+        JsonStateStore(root).preflight()
+
+
+def test_state_preflight_rejects_read_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "state"
+    original = Path.read_text
+
+    def deny_probe_read(path: Path, *args: object, **kwargs: object) -> str:
+        if path.parent == root and path.name.startswith(".wp-modernizer-preflight-"):
+            raise PermissionError("unreadable")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", deny_probe_read)
+
+    with pytest.raises(StateStoreUnavailableError, match="escrita e leitura"):
+        JsonStateStore(root).preflight()
 
 
 def test_state_round_trip_and_layout(tmp_path: Path) -> None:
