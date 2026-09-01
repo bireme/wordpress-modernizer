@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, Set
 
 from wp_modernizer.application.ports import CapabilityProbePort, Clock, FileSystem, StateStore
 from wp_modernizer.domain.enums import (
@@ -12,7 +12,7 @@ from wp_modernizer.domain.enums import (
     StepCapability,
     StepStatus,
 )
-from wp_modernizer.domain.errors import ResumeConsistencyError
+from wp_modernizer.domain.errors import MissingCapabilityError, ResumeConsistencyError
 from wp_modernizer.domain.models import CapabilityReport, RunManifest, StepResult
 
 from .steps import Step
@@ -39,8 +39,23 @@ class PipelineRunner:
         installation_path: Path,
         steps: Iterable[Step],
         context: Dict[str, Any],
+        required_capabilities: Set[Capability] | None = None,
     ) -> RunManifest:
-        before = self._probe.probe(installation_path)
+        requirements = required_capabilities
+        before = (
+            self._probe.probe(installation_path, requirements)
+            if requirements is not None
+            else self._probe.probe(installation_path)
+        )
+        missing_external = tuple(
+            sorted(
+                (capability for capability in requirements or set() if not before.has(capability)),
+                key=lambda capability: capability.value,
+            )
+        )
+        if missing_external:
+            missing = ", ".join(capability.value for capability in missing_external)
+            raise MissingCapabilityError(f"capabilities obrigatórias ausentes: {missing}")
         manifest.health_before = before.health
         self._record_diagnostics(manifest, before)
         manifest.status = RunStatus.RUNNING
@@ -93,7 +108,11 @@ class PipelineRunner:
             # This post-step probe is also the final validation when ``step`` is the
             # last executable step.  Keep it here instead of representing that same
             # probe as a separate, no-op health-check step in plans and manifests.
-            after = self._probe.probe(installation_path)
+            after = (
+                self._probe.probe(installation_path, requirements)
+                if requirements is not None
+                else self._probe.probe(installation_path)
+            )
             manifest.health_after = after.health
             self._record_diagnostics(manifest, after)
             self._state.save_checkpoint(manifest.installation_id, manifest.run_id, result, after)

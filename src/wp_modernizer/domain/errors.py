@@ -42,6 +42,10 @@ class DiagnosticError(ModernizerError):
     pass
 
 
+class MissingCapabilityError(DiagnosticError):
+    pass
+
+
 class WordPressUnavailableError(DiagnosticError):
     pass
 

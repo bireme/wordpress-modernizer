@@ -4,6 +4,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, cast
 
+from wp_modernizer.application.dependencies import required_capabilities
 from wp_modernizer.application.ports import (
     CapabilityProbePort,
     Clock,
@@ -225,7 +226,13 @@ class ModernizerService:
             "manifest": manifest,
         }
         steps = tuple(OperationStep(step, self._operations) for step in planned_steps)
-        return self._runner.run(manifest, path, steps, context)
+        return self._runner.run(
+            manifest,
+            path,
+            steps,
+            context,
+            required_capabilities(config=self.config, steps=planned_steps, dry_run=dry_run),
+        )
 
     def resume(
         self,
@@ -300,6 +307,11 @@ class ModernizerService:
                 "resumed_from": run_id,
                 "manifest": new,
             },
+            required_capabilities(
+                config=self.config,
+                steps=remaining,
+                dry_run=dry_run,
+            ),
         )
 
     @staticmethod

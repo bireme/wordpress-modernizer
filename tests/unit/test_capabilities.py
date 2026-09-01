@@ -1,6 +1,11 @@
 from pathlib import Path
 
-from tests.fakes.core import FakeCommandResult, FakeCommandRunner, FakeFileSystem
+from tests.fakes.core import (
+    FakeCommandResult,
+    FakeCommandRunner,
+    FakeExecutableLocator,
+    FakeFileSystem,
+)
 from wp_modernizer.diagnostics.capability import CapabilityProbe
 from wp_modernizer.domain.enums import Capability, DatabaseAvailabilityStatus, HealthStatus
 from wp_modernizer.domain.models import DatabaseProbeResult
@@ -60,6 +65,7 @@ def run_probe(
         database=Database(database_status),
         wordpress=WordPress(database_name),
         database_endpoints={PATH: endpoints},
+        executable_locator=FakeExecutableLocator(),
     ).probe(PATH)
 
 
@@ -143,5 +149,6 @@ def test_core_incomplete() -> None:
         database=Database(),
         wordpress=WordPress(),
         database_endpoints={PATH: ("db",)},
+        executable_locator=FakeExecutableLocator(),
     ).probe(PATH)
     assert report.health is HealthStatus.CORE_INCOMPLETE
