@@ -31,10 +31,24 @@ nova operação precisa ser classificada e adaptada explicitamente. A simulaçã
 capacidades e grava seu manifesto externo de auditoria. Intencionalmente, não existe comando de
 publicação em produção.
 
+No fluxo de migração, `snapshot_source_database` é `READ_ONLY` e consulta diretamente o WordPress
+remoto. Assim, `pipeline --dry-run` resolve e registra `source_server`, `source_path`,
+`source_database`, `source_database_endpoint`, `target_database_endpoint`, `target_database`, URL
+de origem e `test_url` sem depender de `backup_existing_test` ou `copy_files`. Dump, importação,
+backup e cópia de arquivos continuam apenas `PLANNED`. O dry-run valida acesso e resolução, mas
+não prova espaço livre para o backup, conclusão de uma cópia grande ou sucesso futuro do dump e
+da importação.
+
 O adaptador público de execução delega cópias à porta de transporte remoto. Um roteador usa
 SSH/rsync para autenticação por chave e SSH/SFTP (Paramiko) para autenticação por senha. A
-descoberta e transferência de bancos é delegada
-ao MySQL e operações WordPress ao WP-CLI. Uma migração de banco exige endpoints de origem e de
-TESTE permitidos e resolução não ambígua. Credenciais do `wp-config` são entregues ao WP-CLI por
-entrada padrão, e não por `argv`. A retenção de uma cópia de teste já existente continua falhando
-antes de alterar estado até que um adaptador específico seja configurado.
+descoberta e transferência de bancos é delegada ao MySQL e operações WordPress ao WP-CLI. Uma
+migração de banco exige um endpoint de origem cadastrado (explícito ou descoberto de forma exata)
+e endpoints de TESTE autorizados, com resolução não ambígua em ambos os lados. Credenciais do
+`wp-config` são entregues ao WP-CLI por entrada padrão, e não por `argv`.
+
+Com destino existente, a execução sem `--replace-existing` é recusada. Com a opção, o step
+`backup_existing_test` valida novamente ambiente, estrutura, raiz permitida e ausência de symlink;
+depois copia a árvore, compara uma impressão SHA-256 de conteúdo, torna o snapshot somente leitura
+e publica-o com nome não colidente. Somente um registro de backup revalidado autoriza
+`copy_files` a remover a árvore TESTE antiga e transferir a origem. Uma falha antes dessa validação
+não remove, move nem sobrescreve o destino existente.

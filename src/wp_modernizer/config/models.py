@@ -51,6 +51,7 @@ class InstallationConfig(BaseModel):
     source_path: Path
     destination_path: Path
     destination_environment: Environment = Environment.TEST
+    source_database_endpoint: Optional[str] = None
     test_url: Optional[AnyHttpUrl] = None
     allowed_database_endpoints: List[str]
     database_aliases: List[str] = Field(default_factory=list)
@@ -177,4 +178,24 @@ class ApplicationConfig(BaseModel):
                 raise ValueError(
                     f"a instalação {key} referencia bancos desconhecidos: {sorted(unknown)}"
                 )
+            non_test = [
+                endpoint_id
+                for endpoint_id in item.allowed_database_endpoints
+                if databases[endpoint_id].environment is not Environment.TEST
+            ]
+            if non_test:
+                raise ValueError(
+                    "allowed_database_endpoints aceita somente destinos de TESTE; "
+                    f"endpoints inválidos em {key}: {sorted(non_test)}"
+                )
+            if item.source_database_endpoint is not None:
+                source_endpoint = databases.get(item.source_database_endpoint)
+                if source_endpoint is None:
+                    raise ValueError(
+                        f"a instalação {key} referencia um banco de origem desconhecido"
+                    )
+                if source_endpoint.environment is not item.source_environment:
+                    raise ValueError(
+                        f"o banco de origem de {key} não pertence a source_environment"
+                    )
         return value

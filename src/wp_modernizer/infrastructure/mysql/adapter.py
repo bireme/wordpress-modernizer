@@ -45,6 +45,9 @@ class MySQLAdapter:
         except KeyError as exc:
             raise ConfigurationError(f"Endpoint MySQL desconhecido: {endpoint_id}") from exc
 
+    def endpoint_ids(self) -> tuple[str, ...]:
+        return tuple(self._endpoints)
+
     def list_schemas(self, endpoint_id: str) -> Set[str]:
         result = self._query(endpoint_id, "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA")
         return set(result.splitlines())

@@ -42,6 +42,7 @@ class FakeFileSystem:
         self.files = files or {}
         self.current_fingerprint = fingerprint
         self.removed: List[Path] = []
+        self.backups: Dict[Path, str] = {}
 
     def exists(self, path: Path) -> bool:
         return path in self.files
@@ -66,6 +67,14 @@ class FakeFileSystem:
     def move(self, source: Path, destination: Path) -> None:
         if source in self.files:
             self.files[destination] = self.files.pop(source)
+
+    def create_immutable_backup(self, source: Path, destination: Path) -> str:
+        fingerprint = f"backup:{source}"
+        self.backups[destination] = fingerprint
+        return fingerprint
+
+    def verify_backup(self, path: Path, fingerprint: str) -> bool:
+        return self.backups.get(path) == fingerprint
 
 
 def health(status: HealthStatus) -> CapabilityReport:

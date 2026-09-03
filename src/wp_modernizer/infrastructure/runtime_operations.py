@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import tempfile
 from dataclasses import replace
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Tuple
 
 from wp_modernizer.application.ports import (
     DatabasePort,
+    FileSystem,
     FileTransferPort,
     ManagedPluginPort,
+    SourceWordPressPort,
     WordPressPort,
 )
 from wp_modernizer.domain.database import DatabaseLocator, ProductionTestDatabaseNamingStrategy
@@ -55,6 +58,9 @@ class RuntimeOperations:
         *,
         database_overrides: Dict[str, str] | None = None,
         managed_plugins: ManagedPluginPort | None = None,
+        source_wordpress: SourceWordPressPort | None = None,
+        filesystem: FileSystem | None = None,
+        organizational_domain: str = "bireme.org",
     ) -> None:
         self._files = files
         self._databases = databases
@@ -62,6 +68,9 @@ class RuntimeOperations:
         self._parser = parser
         self._database_overrides = database_overrides or {}
         self._managed_plugins = managed_plugins
+        self._source_wordpress = source_wordpress
+        self._filesystem = filesystem
+        self._test_url_policy = OrganizationalTestUrlPolicy(organizational_domain)
         self._database_runs: Dict[tuple[str, str], Dict[str, Any]] = {}
 
     def execute(self, step_name: str, context: Dict[str, Any]) -> StepResult:
@@ -77,31 +86,83 @@ class RuntimeOperations:
         run_id = str(context["run_id"])
 
         if step_name == "backup_existing_test":
-            if not path.exists():
+            if self._filesystem is None:
+                return self._failed(step_name, "o adaptador de backup local não está configurado")
+            if not self._filesystem.exists(path):
                 return self._ok(step_name, False, "não há cópia de teste existente")
             if not context.get("replace_existing"):
                 return self._failed(
                     step_name, "a cópia de teste existente requer --replace-existing"
                 )
+            if self._filesystem.is_symlink(path):
+                raise UnsafeOperationError("Destino destrutivo recusado por ser um link simbólico")
             parsed = self._parser.parse(
                 str(path), planned_step.installation_id, installation.destination_environment
             )
-            self._parser.assert_safe_destructive_target(path, parsed)
-            return self._failed(
-                step_name,
-                "o adaptador de cópia de segurança deve ser configurado antes da substituição; "
-                "o teste existente foi preservado",
+            self._parser.assert_safe_destructive_target(
+                path, parsed, is_symlink=self._filesystem.is_symlink(path)
+            )
+            backup_path = self._backup_path(parsed.app_root, run_id, planned_step.installation_id)
+            recovery = context.get("recovery_data", {}).setdefault(planned_step.installation_id, {})
+            recorded_path = recovery.get("backup_path")
+            recorded_fingerprint = recovery.get("backup_fingerprint")
+            if recorded_path == str(backup_path) and recorded_fingerprint:
+                if self._filesystem.verify_backup(backup_path, recorded_fingerprint):
+                    return self._ok(step_name, False, "backup imutável existente foi revalidado")
+                return self._failed(step_name, "o backup registrado não passou na revalidação")
+            try:
+                fingerprint = self._filesystem.create_immutable_backup(path, backup_path)
+            except (InfrastructureError, OSError) as exc:
+                return self._failed(
+                    step_name, f"backup falhou; a cópia de TESTE foi preservada: {exc}"
+                )
+            if not self._filesystem.verify_backup(backup_path, fingerprint):
+                return self._failed(
+                    step_name, "backup falhou na verificação; a cópia de TESTE foi preservada"
+                )
+            recovery.update(
+                {
+                    "backup_path": str(backup_path),
+                    "backup_fingerprint": fingerprint,
+                    "backup_source_path": str(path),
+                    "backup_run_id": run_id,
+                }
+            )
+            return self._ok(
+                step_name, True, "backup imutável da cópia de TESTE criado e verificado"
             )
 
         if step_name == "copy_files":
+            if self._filesystem is not None and self._filesystem.is_symlink(path):
+                raise UnsafeOperationError("Destino destrutivo recusado por ser um link simbólico")
             parsed = self._parser.parse(
                 str(path), planned_step.installation_id, installation.destination_environment
             )
-            self._parser.assert_safe_destructive_target(path, parsed)
+            self._parser.assert_safe_destructive_target(
+                path,
+                parsed,
+                is_symlink=self._filesystem.is_symlink(path) if self._filesystem else False,
+            )
             server = self._files.get_server(installation.source_server)
             if server.environment is not installation.source_environment:
                 raise UnsafeOperationError("O ambiente do servidor não coincide com o da origem")
             try:
+                if self._filesystem is not None and self._filesystem.exists(path):
+                    recovery = context.get("recovery_data", {}).get(
+                        planned_step.installation_id, {}
+                    )
+                    backup = recovery.get("backup_path")
+                    fingerprint = recovery.get("backup_fingerprint")
+                    if (
+                        not backup
+                        or not fingerprint
+                        or not self._filesystem.verify_backup(Path(backup), fingerprint)
+                    ):
+                        return self._failed(
+                            step_name,
+                            "substituição recusada: backup imutável verificado não encontrado",
+                        )
+                    self._filesystem.remove_tree(path)
                 elapsed = self._files.copy_from(
                     installation.source_server,
                     Path(installation.source_path),
@@ -109,7 +170,7 @@ class RuntimeOperations:
                     planned_step.excludes,
                     run_id,
                 )
-            except InfrastructureError as exc:
+            except (InfrastructureError, OSError) as exc:
                 return self._failed(step_name, str(exc))
             return StepResult(
                 step_name,
@@ -124,7 +185,6 @@ class RuntimeOperations:
                 step_name,
                 planned_step.installation_id,
                 installation,
-                path,
                 run_id,
                 context.get("recovery_data", {}),
             )
@@ -193,23 +253,67 @@ class RuntimeOperations:
         step_name: str,
         installation_id: str,
         installation: Any,
-        path: Path,
         run_id: str,
         recovery_data: Dict[str, Dict[str, str]],
     ) -> StepResult:
-        source_name = self._wordpress.get_config(path, "DB_NAME", run_id)
-        source_endpoints = [
-            endpoint_id
-            for endpoint_id in installation.allowed_database_endpoints
-            if self._databases.get_database(endpoint_id).environment
-            is installation.source_environment
-            and source_name in self._databases.list_schemas(endpoint_id)
-        ]
-        if len(source_endpoints) != 1:
+        if self._source_wordpress is None:
+            return self._failed(
+                step_name, "o adapter de inspeção WordPress remota não está configurado"
+            )
+        server = self._source_wordpress.get_server(installation.source_server)
+        if server.environment is not installation.source_environment:
+            raise UnsafeOperationError("O ambiente do servidor não coincide com o da origem")
+        try:
+            source_path = Path(installation.source_path)
+            source_name = self._source_wordpress.get_config(
+                installation.source_server, source_path, "DB_NAME", run_id
+            )
+            source_url = self._source_wordpress.get_site_url(
+                installation.source_server, source_path, run_id
+            )
+            test_url = self._test_url_policy.resolve(
+                source_url,
+                str(getattr(installation, "test_url", None))
+                if getattr(installation, "test_url", None)
+                else None,
+            )
+            configured_source = getattr(installation, "source_database_endpoint", None)
+            if configured_source:
+                candidate_ids: tuple[str, ...] = (str(configured_source),)
+            else:
+                source_host = self._source_wordpress.get_config(
+                    installation.source_server, source_path, "DB_HOST", run_id
+                )
+                host, port = self._parse_database_host(source_host)
+                candidate_ids = tuple(
+                    endpoint_id
+                    for endpoint_id in self._databases.endpoint_ids()
+                    if self._databases.get_database(endpoint_id).environment
+                    is installation.source_environment
+                    and self._databases.get_database(endpoint_id).host == host
+                    and self._databases.get_database(endpoint_id).port == port
+                )
+            source_endpoints = tuple(
+                endpoint_id
+                for endpoint_id in candidate_ids
+                if self._databases.get_database(endpoint_id).environment
+                is installation.source_environment
+                and source_name in self._databases.list_schemas(endpoint_id)
+            )
+        except (
+            ConfigurationError,
+            InfrastructureError,
+            UnsafeOperationError,
+            WordPressUnavailableError,
+        ) as exc:
+            return self._failed(step_name, str(exc))
+        if not source_endpoints:
             return self._failed(
                 step_name,
-                "a origem MySQL não foi identificada de forma única entre os endpoints permitidos",
+                "o banco MySQL de origem não existe no endpoint configurado ou descoberto",
             )
+        if len(source_endpoints) > 1:
+            return self._failed(step_name, "a origem MySQL foi identificada em mais de um endpoint")
         target_endpoints = [
             endpoint_id
             for endpoint_id in installation.allowed_database_endpoints
@@ -228,12 +332,19 @@ class RuntimeOperations:
         except (AmbiguousDatabaseError, DatabaseNotFoundError) as exc:
             return self._failed(step_name, str(exc))
         self._database_runs[(run_id, installation_id)] = {
-            "source_endpoint": source_endpoints[0],
+            "source_database_endpoint": source_endpoints[0],
             "source_database": source_name,
-            "target_endpoint": target.endpoint_id,
+            "target_database_endpoint": target.endpoint_id,
             "target_database": target.database_name,
+            "source_server": installation.source_server,
+            "source_path": str(installation.source_path),
+            "source_environment": installation.source_environment.value,
+            "source_url": source_url,
+            "test_url": test_url,
         }
-        recovery_data[installation_id] = dict(self._database_runs[(run_id, installation_id)])
+        recovery_data.setdefault(installation_id, {}).update(
+            self._database_runs[(run_id, installation_id)]
+        )
         return self._ok(step_name, False, "origem e destino MySQL resolvidos sem ambiguidade")
 
     def _refresh_managed_plugins(
@@ -423,10 +534,16 @@ class RuntimeOperations:
             dump_path = Path(handle.name)
         try:
             self._databases.dump(
-                state["source_endpoint"], state["source_database"], dump_path, run_id
+                state.get("source_database_endpoint", state.get("source_endpoint", "")),
+                state["source_database"],
+                dump_path,
+                run_id,
             )
             self._databases.import_dump(
-                state["target_endpoint"], state["target_database"], dump_path, run_id
+                state.get("target_database_endpoint", state.get("target_endpoint", "")),
+                state["target_database"],
+                dump_path,
+                run_id,
             )
         finally:
             dump_path.unlink(missing_ok=True)
@@ -445,12 +562,54 @@ class RuntimeOperations:
         if not state:
             return self._failed(step_name, "o destino MySQL desta execução não foi resolvido")
         values = self._databases.wordpress_configuration(
-            state["target_endpoint"], state["target_database"]
+            state.get("target_database_endpoint", state.get("target_endpoint", "")),
+            state["target_database"],
         )
         self._wordpress.set_config(path, values, run_id)
         self._database_runs.pop(key, None)
-        recovery_data.pop(installation_id, None)
         return self._ok(step_name, True, "wp-config aponta para o banco do ambiente de teste")
+
+    @staticmethod
+    def _backup_path(app_root: Path, run_id: str, installation_id: str) -> Path:
+        def component(value: str) -> str:
+            safe = "".join(
+                character if character.isalnum() or character in "._-" else "-"
+                for character in value
+            )
+            safe = safe.strip(".-")
+            if safe == value and len(safe) <= 48:
+                return safe
+            digest = sha256(value.encode("utf-8")).hexdigest()[:12]
+            return f"{safe[:35]}-{digest}" if safe else digest
+
+        return app_root / ".wp-modernizer-backups" / component(run_id) / component(installation_id)
+
+    @staticmethod
+    def _parse_database_host(value: str) -> tuple[str, int]:
+        raw = value.strip()
+        if not raw or any(character in raw for character in "\r\n\x00"):
+            raise ConfigurationError("DB_HOST remoto está vazio ou contém caracteres inválidos")
+        if raw.startswith("["):
+            closing = raw.find("]")
+            if closing < 1:
+                raise ConfigurationError("DB_HOST remoto possui formato não suportado")
+            host = raw[1:closing]
+            suffix = raw[closing + 1 :]
+            if not suffix:
+                return host, 3306
+            if not suffix.startswith(":") or not suffix[1:].isdigit():
+                raise ConfigurationError("DB_HOST remoto possui socket ou formato não suportado")
+            return host, int(suffix[1:])
+        if raw.count(":") == 1:
+            host, port = raw.rsplit(":", 1)
+            if not host or not port.isdigit():
+                raise ConfigurationError("DB_HOST remoto possui formato não suportado")
+            return host, int(port)
+        if ":" in raw:
+            raise ConfigurationError(
+                "DB_HOST remoto ambíguo; configure source_database_endpoint explicitamente"
+            )
+        return raw, 3306
 
     def _search_replace(
         self,
@@ -481,14 +640,21 @@ class RuntimeOperations:
             return self._ok(step_name, False, "nenhum search-replace pendente")
         explicit_url = pending.parameters.get("test_url") or None
         try:
-            old_url = self._wordpress.get_site_url(path, run_id)
-            if explicit_url is not None and old_url.rstrip("/") == explicit_url.rstrip("/"):
-                return self._failed(
-                    step_name, "search-replace recusado: URLs de origem e destino coincidem"
-                )
-            new_url = OrganizationalTestUrlPolicy(
-                pending.parameters.get("organizational_domain", "")
-            ).resolve(old_url, explicit_url)
+            planned_step = context.get("planned_step")
+            installation_id = getattr(planned_step, "installation_id", "")
+            resolution = context.get("recovery_data", {}).get(installation_id, {})
+            if dry_run and resolution.get("source_url") and resolution.get("test_url"):
+                old_url = resolution["source_url"]
+                new_url = resolution["test_url"]
+            else:
+                old_url = self._wordpress.get_site_url(path, run_id)
+                if explicit_url is not None and old_url.rstrip("/") == explicit_url.rstrip("/"):
+                    return self._failed(
+                        step_name, "search-replace recusado: URLs de origem e destino coincidem"
+                    )
+                new_url = OrganizationalTestUrlPolicy(
+                    pending.parameters.get("organizational_domain", "")
+                ).resolve(old_url, explicit_url)
             if old_url.rstrip("/") == new_url.rstrip("/"):
                 return self._failed(
                     step_name, "search-replace recusado: URLs de origem e destino coincidem"

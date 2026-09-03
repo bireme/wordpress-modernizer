@@ -115,7 +115,7 @@ class MigrationPlan:
     source_environment: Environment
     destination_environment: Environment
     source_server: str
-    database_endpoint: Optional[str]
+    source_database_endpoint: Optional[str]
     installations: Tuple[WordPressInstallation, ...]
     steps: Tuple[PlannedStep, ...]
     pending_operations: Tuple[PendingOperation, ...] = ()
