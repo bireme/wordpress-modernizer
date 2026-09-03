@@ -132,6 +132,11 @@ def _emit(payload: Any, as_json: bool) -> None:
 
 
 def _serialize(value: Any) -> Any:
+    if isinstance(value, bytes):
+        return {
+            "encoding": "hex",
+            "value": value.hex(),
+        }
     if hasattr(value, "value"):
         return value.value
     if hasattr(value, "__dataclass_fields__"):
