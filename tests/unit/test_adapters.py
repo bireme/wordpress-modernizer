@@ -1,3 +1,4 @@
+import io
 import socket
 import stat
 from pathlib import Path, PurePosixPath
@@ -64,6 +65,12 @@ class FakeSFTP:
             "/source/keep.txt": b"keep",
             "/source/skip.sql": b"skip",
             "/source/nested/inside.txt": b"nested",
+            "/source/htdocs/wp-config.php": (
+                b"<?php\n"
+                b"define('DB_NAME', 'wp_portal_prod');\n"
+                b"define('DB_HOST', 'prod-db:3307');\n"
+                b"$table_prefix = 'wp_';\n"
+            ),
         }
         self.timeout = None
         self.closed = False
@@ -91,6 +98,13 @@ class FakeSFTP:
         Path(local).write_bytes(self.files[remote])
         if callback is not None:
             callback(len(self.files[remote]), len(self.files[remote]))
+
+    def open(self, remote: str, mode: str) -> io.BytesIO:
+        assert mode == "rb"
+        try:
+            return io.BytesIO(self.files[remote])
+        except KeyError as exc:
+            raise OSError("missing remote file") from exc
 
     def close(self) -> None:
         self.closed = True
@@ -221,6 +235,43 @@ def test_mysql_never_imports_into_production() -> None:
             "db", "site", Path("/tmp/dump.sql"), "r"
         )
     assert runner.calls == []
+
+
+def test_mysql_reads_source_site_url_with_a_fixed_select_only() -> None:
+    production = database().model_copy(update={"environment": Environment.PRODUCTION})
+    runner = FakeCommandRunner([FakeCommandResult(stdout="https://portal.bireme.org\n")])
+    value = MySQLAdapter({"production": production}, Secrets(), runner).read_site_url(
+        "production", "wordpress", "wp_"
+    )
+    assert value == "https://portal.bireme.org"
+    sql = runner.calls[0][-1]
+    assert sql == ("SELECT option_value FROM `wp_options` WHERE option_name='siteurl' LIMIT 2")
+    assert all(keyword not in sql.upper() for keyword in ("UPDATE", "INSERT", "DELETE"))
+
+
+def test_mysql_site_url_rejects_bad_prefix_missing_and_ambiguous_rows() -> None:
+    production = database().model_copy(update={"environment": Environment.PRODUCTION})
+    no_calls = FakeCommandRunner()
+    adapter = MySQLAdapter({"production": production}, Secrets(), no_calls)
+    with pytest.raises(ConfigurationError, match="prefixo"):
+        adapter.read_site_url("production", "wordpress", "wp_;DROP")
+    assert no_calls.calls == []
+
+    missing = MySQLAdapter(
+        {"production": production}, Secrets(), FakeCommandRunner([FakeCommandResult()])
+    )
+    with pytest.raises(DatabaseNotFoundError, match="siteurl"):
+        missing.read_site_url("production", "wordpress", "wp_")
+
+    ambiguous = MySQLAdapter(
+        {"production": production},
+        Secrets(),
+        FakeCommandRunner(
+            [FakeCommandResult(stdout="https://one.bireme.org\nhttps://two.bireme.org\n")]
+        ),
+    )
+    with pytest.raises(InfrastructureError, match="ambígua"):
+        ambiguous.read_site_url("production", "wordpress", "wp_")
 
 
 def test_mysql_import_requires_preexisting_test_schema() -> None:
@@ -525,34 +576,47 @@ def test_file_transfer_router_selects_authentication_explicitly(tmp_path: Path) 
     assert client.connect_kwargs["password"] == "password"
 
 
-def test_key_ssh_reads_remote_wordpress_without_credentials_in_argv() -> None:
+def test_key_ssh_reads_remote_config_without_wpcli_or_credentials_in_argv() -> None:
     key = password_server().model_copy(update={"authentication": "key", "password_secret": None})
-    runner = FakeCommandRunner([FakeCommandResult(stdout="wp_portal_prod\n")])
+    runner = FakeCommandRunner(
+        [
+            FakeCommandResult(
+                stdout=(
+                    "<?php\n"
+                    'define("DB_NAME", "wp_portal_prod");\n'
+                    "define('DB_HOST', 'prod-db:3307');\n"
+                    "$table_prefix = 'wp_';\n"
+                )
+            )
+        ]
+    )
     adapter = RSyncSSHAdapter({"source": key}, Secrets(), runner)
 
-    value = adapter.get_config("source", Path("/source/htdocs"), "DB_NAME", "run-1")
+    value = adapter.inspect_config("source", Path("/source/htdocs"), "run-1")
 
-    assert value == "wp_portal_prod"
+    assert value.database_name == "wp_portal_prod"
+    assert value.database_host == "prod-db:3307"
+    assert value.table_prefix == "wp_"
     assert runner.calls[0][0] == "ssh"
-    assert "config get DB_NAME" in runner.calls[0][-1]
+    assert "cat -- /source/htdocs/wp-config.php" in runner.calls[0][-1]
+    assert "wp " not in runner.calls[0][-1]
     assert "password" not in " ".join(runner.calls[0])
     assert "user" not in " ".join(runner.calls[0])
 
 
-def test_password_ssh_reads_remote_wordpress_via_verified_session() -> None:
+def test_password_sftp_reads_remote_config_via_verified_session() -> None:
     client = FakeSSHClient()
-    client.exec_stdout = b"prod-db:3307\n"
     adapter = PasswordSFTPAdapter(
         {"source": password_server()}, Secrets(), client_factory=lambda: client
     )
 
-    value = adapter.get_config("source", Path("/source/htdocs"), "DB_HOST", "run-1")
+    value = adapter.inspect_config("source", Path("/source/htdocs"), "run-1")
 
-    assert value == "prod-db:3307"
+    assert value.database_host == "prod-db:3307"
     assert client.loaded_system_keys
     assert client.connect_kwargs["password"] == "password"
-    assert client.exec_calls == [("wp --path=/source/htdocs config get DB_HOST", 60)]
-    assert "password" not in client.exec_calls[0][0]
+    assert client.exec_calls == []
+    assert client.sftp.closed
 
 
 def test_local_filesystem_fingerprint_changes_and_remove(tmp_path: Path) -> None:

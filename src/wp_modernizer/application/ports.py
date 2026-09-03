@@ -11,6 +11,7 @@ from wp_modernizer.domain.models import (
     ManagedPlugin,
     ManagedPluginResult,
     RunManifest,
+    SourceDatabaseConfiguration,
     StepResult,
     WordPressInstallation,
 )
@@ -46,12 +47,12 @@ class FileTransferPort(ServerRegistry, Protocol):
     ) -> int: ...
 
 
-class SourceWordPressPort(ServerRegistry, Protocol):
-    """Read-only access to WordPress configuration on its source server."""
+class SourceInspectionPort(ServerRegistry, Protocol):
+    """Semantically restricted, read-only inspection of a source installation."""
 
-    def get_config(self, server_id: str, path: Path, name: str, run_id: str) -> str: ...
-
-    def get_site_url(self, server_id: str, path: Path, run_id: str) -> str: ...
+    def inspect_config(
+        self, server_id: str, path: Path, run_id: str
+    ) -> SourceDatabaseConfiguration: ...
 
 
 class DatabasePort(DatabaseRegistry, Protocol):
@@ -68,6 +69,8 @@ class DatabasePort(DatabaseRegistry, Protocol):
     ) -> None: ...
 
     def wordpress_configuration(self, endpoint_id: str, database: str) -> Mapping[str, str]: ...
+
+    def read_site_url(self, endpoint_id: str, database: str, table_prefix: str) -> str: ...
 
 
 class WordPressPort(Protocol):
