@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import fnmatch
 import os
-import shlex
 import socket
 import stat
 import time
@@ -23,6 +22,9 @@ from wp_modernizer.domain.errors import (
     TransferError,
     WordPressUnavailableError,
 )
+from wp_modernizer.domain.models import SourceDatabaseConfiguration
+
+from .source_config import parse_source_config
 
 
 class _RejectUnknownHostKey:
@@ -92,21 +94,10 @@ class PasswordSFTPAdapter:
             client.close()
         return int(time.monotonic() - started)
 
-    def get_config(self, server_id: str, path: Path, name: str, run_id: str) -> str:
+    def inspect_config(
+        self, server_id: str, path: Path, run_id: str
+    ) -> SourceDatabaseConfiguration:
         del run_id
-        if name not in {"DB_NAME", "DB_HOST"}:
-            raise ConfigurationError("A leitura remota solicitou uma constante não autorizada")
-        return self._read_wordpress(server_id, path, ["config", "get", name])
-
-    def get_site_url(self, server_id: str, path: Path, run_id: str) -> str:
-        del run_id
-        return self._read_wordpress(
-            server_id,
-            path,
-            ["--skip-plugins", "--skip-themes", "option", "get", "siteurl"],
-        )
-
-    def _read_wordpress(self, server_id: str, path: Path, arguments: list[str]) -> str:
         server = self.get_server(server_id)
         if server.authentication != "password" or server.password_secret is None:
             raise ConfigurationError(
@@ -119,35 +110,33 @@ class PasswordSFTPAdapter:
             or any(character in str(remote_path) for character in "\r\n\x00")
         ):
             raise ConfigurationError("O caminho remoto WordPress deve ser absoluto e seguro")
+        config_path = remote_path / "wp-config.php"
         username = self._secrets.get(server.username_secret)
         password = self._secrets.get(server.password_secret)
         client = self._client_factory()
         try:
             self._configure_host_verification(client, server)
             self._connect(client, server, username, password)
-            command = shlex.join(["wp", f"--path={remote_path}", *arguments])
-            _stdin, stdout, stderr = client.exec_command(command, timeout=60)
-            if stdout.channel.recv_exit_status() != 0:
-                # stderr may include secrets emitted by WordPress/PHP and is deliberately ignored.
-                stderr.read()
-                raise WordPressUnavailableError(
-                    "não foi possível ler a configuração WordPress na origem remota"
-                )
-            raw = bytes(stdout.read())
+            sftp = client.open_sftp()
+            try:
+                sftp.get_channel().settimeout(60)
+                with sftp.open(str(config_path), "rb") as remote_file:
+                    raw = bytes(remote_file.read(1024 * 1024 + 1))
+            finally:
+                sftp.close()
         except WordPressUnavailableError:
             raise
         except (socket.timeout, TimeoutError) as exc:
-            raise CommandTimeoutError("A leitura WordPress remota excedeu o limite de 60s") from exc
+            raise CommandTimeoutError("A leitura de wp-config.php excedeu o limite de 60s") from exc
         except (OSError, paramiko.SSHException) as exc:
             raise WordPressUnavailableError(
-                "não foi possível ler a configuração WordPress na origem remota"
+                "não foi possível ler wp-config.php na origem remota"
             ) from exc
         finally:
             client.close()
-        value = raw.decode("utf-8", errors="replace").strip()
-        if not value:
-            raise WordPressUnavailableError("a configuração WordPress remota está vazia")
-        return value
+        if not raw or len(raw) > 1024 * 1024:
+            raise WordPressUnavailableError("wp-config.php remoto está vazio ou excede o limite")
+        return parse_source_config(raw.decode("utf-8", errors="replace"))
 
     @staticmethod
     def _configure_host_verification(client: Any, server: ServerConfig) -> None:

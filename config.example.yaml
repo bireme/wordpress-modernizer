@@ -4,6 +4,8 @@ organizational_domain: bireme.org
 allowed_app_roots:
   - /home/apps
 servers:
+  # PRODUÇÃO não requer WP-CLI/PHP CLI. A conta precisa apenas ler wp-config.php e os arquivos
+  # copiados; host key verification continua obrigatória.
   source-example:
     host: source.example.org
     port: 22
@@ -16,7 +18,8 @@ servers:
     # known_hosts_file: /etc/wp-modernizer/known_hosts
 databases:
   # Todos os schemas devem ser provisionados previamente pela infraestrutura.
-  # Endpoint somente-leitura usado para dump da origem. Ele NÃO pertence à allowlist de destino.
+  # Endpoint somente-leitura usado para descobrir siteurl e fazer dump da origem.
+  # Ele NÃO pertence à allowlist de destino.
   production-db-example:
     host: db-production.example.invalid
     port: 3306
@@ -36,7 +39,8 @@ installations:
     source_path: /home/apps/example.org/wp-main/htdocs
     destination_path: /home/apps/example.org/wp-main-test/htdocs
     destination_environment: test
-    # Opcional quando DB_HOST remoto corresponde exatamente a um único endpoint cadastrado.
+    # DB_NAME, DB_HOST e $table_prefix vêm do wp-config.php remoto. Opcional quando DB_HOST
+    # corresponde exatamente a um único endpoint cadastrado.
     # Recomendado para aliases DNS, sockets ou topologias em que host/porta não sejam únicos.
     source_database_endpoint: production-db-example
     # Omitido no caso convencional: https://boletin.bireme.org vira

@@ -22,11 +22,9 @@ def required_capabilities(
     )
     if not active_steps:
         return set()
-    required = {
-        Capability.PHP_AVAILABLE,
-        Capability.WPCLI_AVAILABLE,
-        Capability.MYSQL_AVAILABLE,
-    }
+    required = {Capability.MYSQL_AVAILABLE}
+    if any(step.name != "snapshot_source_database" for step in active_steps):
+        required.update({Capability.PHP_AVAILABLE, Capability.WPCLI_AVAILABLE})
     for step in active_steps:
         if step.name in {"copy_files", "snapshot_source_database"}:
             installation = config.installations[step.installation_id]

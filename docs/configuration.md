@@ -28,10 +28,16 @@ inferir genericamente a persistência do filesystem.
 
 ## Bancos de dados
 
-A origem e o destino têm resoluções independentes. A porta de inspeção WordPress remota executa
-somente leituras no `source_server` e no `source_path`: obtém `DB_NAME`, `DB_HOST` e `siteurl`
-diretamente da instalação de origem, inclusive em `--dry-run`. Ela usa a mesma autenticação SSH e
-a mesma verificação de host key do transporte, sem copiar primeiro a árvore para o destino.
+A origem e o destino têm resoluções independentes. A porta de inspeção remota lê somente
+`<source_path>/wp-config.php` por SSH/SFTP e extrai os literais `DB_NAME`, `DB_HOST` e
+`$table_prefix`, inclusive em `--dry-run`. Ela usa a mesma autenticação e a mesma verificação de
+host key do transporte, sem copiar a árvore para o destino e sem executar WP-CLI, PHP ou o
+bootstrap do WordPress em PRODUÇÃO. O conteúdo integral do arquivo e seus segredos nunca são
+incluídos em logs ou exceções.
+
+Depois que endpoint e schema da origem são resolvidos, `siteurl` é lida de
+`<table_prefix>options` por um `SELECT` MySQL fixo e limitado. A conta MySQL de PRODUÇÃO deve ser
+somente-leitura. A descoberta não executa escrita no banco da origem.
 
 Se `source_database_endpoint` estiver definido, ele identifica o endpoint cadastrado usado para
 validar o schema e produzir o dump somente-leitura. Seu `environment` deve coincidir com
@@ -47,7 +53,8 @@ installations:
     allowed_database_endpoints: [test-db-example]
 ```
 
-As credenciais do endpoint de origem são necessárias para consultas de existência e `mysqldump`,
+As credenciais do endpoint de origem são necessárias para consultas de existência, leitura de
+`siteurl` e `mysqldump`,
 mas nunca autorizam importação: `MySQLAdapter.import_dump` continua recusando qualquer endpoint
 que não seja TESTE.
 
