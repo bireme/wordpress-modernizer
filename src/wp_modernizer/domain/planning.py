@@ -68,7 +68,7 @@ class MigrationPlanner:
                         node.installation_id,
                         capability=capability,
                         dry_run_requirements=(
-                            (Capability.WPCLI_AVAILABLE, Capability.DATABASE_AVAILABLE)
+                            (Capability.DATABASE_AVAILABLE,)
                             if capability is StepCapability.READ_ONLY
                             else ()
                         ),
