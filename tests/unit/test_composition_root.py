@@ -112,6 +112,8 @@ def test_composition_root_wires_config_secrets_and_all_runtime_adapters(tmp_path
         config.installations["site"].destination_path: ("test-db",)
     }
     assert isinstance(operations._wordpress, WPCLIAdapter)
+    assert operations._source_wordpress is operations._files
+    assert operations._filesystem is service._filesystem
     assert isinstance(operations._managed_plugins, ManagedPluginRefresher)
 
     context = {

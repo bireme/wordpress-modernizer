@@ -18,12 +18,19 @@ Etapas mutáveis omitidas por `--dry-run` não acrescentam dependências. O tran
 senha usa Paramiko e não exige `ssh` nem `rsync`. Uma capability obrigatória ausente interrompe a
 operação antes da criação do run e identifica seu nome no erro.
 
+Para autenticação por chave, a inspeção WordPress remota (inclusive no dry-run) exige `ssh`, mas
+não `rsync`; `rsync` só é exigido pela cópia real. Para autenticação por senha, inspeção e cópia
+usam a sessão Paramiko com verificação de host key. O servidor remoto precisa disponibilizar
+`wp` para a conta configurada. A validação final dessa disponibilidade ocorre na leitura remota,
+sem executar operação mutável.
+
 | Pergunta | Motivo | Formato esperado | Impacto se ausente |
 |---|---|---|---|
 | Quais são as raízes permitidas das aplicações? | delimitar caminhos destrutivos | lista YAML de caminhos absolutos | substituição desabilitada |
 | Quais servidores de origem e impressões digitais SSH estão aprovados? | conexão e autenticidade do host | IDs de servidor, nomes DNS, portas e implantação de `known_hosts` | migrações indisponíveis |
 | Qual provedor de segredos será usado em produção? | obter credenciais sem arquivos | nome/configuração do provedor ou política de variáveis de ambiente | apenas provedor de ambiente |
 | Quais endpoints de bancos de teste são permitidos? | descoberta determinística de bancos | IDs de endpoint/DNS/portas e referências a segredos | localizador informa que não encontrou |
+| Qual endpoint MySQL corresponde a cada origem? | dump somente-leitura e resolução não ambígua | correspondência exata de `DB_HOST` ou `source_database_endpoint` | descoberta da origem é recusada |
 | Bancos de teste ausentes podem ser criados? Por quem? | a criação é privilegiada/destrutiva | booleano por endpoint e processo de concessão | nunca são criados automaticamente |
 | Quais estratégias de nomes/URLs são necessárias? | convenções específicas de cada instalação | estratégia nomeada e exemplos | substituições explícitas obrigatórias |
 | Qual política de proprietário/grupo/modo do sistema de arquivos se aplica? | permissões seguras após a cópia | UID/GID/modo ou adaptador de implantação | nenhuma alteração de proprietário |
@@ -43,8 +50,13 @@ Antes de liberar uma origem, confirme que:
    `known_hosts_file` configurado;
 4. a entrada usa o formato `[host]:porta` quando a porta não é 22;
 5. a conta possui leitura e travessia sobre toda a árvore de origem;
-6. o destino local possui espaço e permissões para criar a cópia;
-7. um teste em infraestrutura descartável confirma as exclusões do plano e os timeouts.
+6. a conta consegue executar `wp --path=<source_path> config get` e `wp option get` somente para
+   inspeção;
+7. o destino local possui espaço para manter simultaneamente a cópia existente, o backup e a nova
+   cópia;
+8. o `app_root` permite criar `.wp-modernizer-backups`, e a política de retenção/backup externo foi
+   definida;
+9. um teste em infraestrutura descartável confirma as exclusões do plano e os timeouts.
 
 Uma chave ausente ou diferente deve interromper o preflight. Não altere `host_key_policy: strict`
 para resolver falhas de autenticação: confiança do host e credenciais do usuário são verificações

@@ -60,6 +60,37 @@ def test_config_rejects_unknown_database() -> None:
         ApplicationConfig.model_validate(raw)
 
 
+def test_allowed_database_endpoints_rejects_production_endpoints() -> None:
+    raw = valid_config()
+    raw["databases"]["prod"] = {
+        "host": "prod-db.example.invalid",
+        "environment": "production",
+        "username_secret": "PROD_DB_USER",
+        "password_secret": "PROD_DB_PASS",
+    }
+    raw["installations"]["i"]["allowed_database_endpoints"] = ["prod"]
+    with pytest.raises(ValidationError, match="somente destinos de TESTE"):
+        ApplicationConfig.model_validate(raw)
+
+
+def test_explicit_source_database_endpoint_is_separate_and_matches_environment() -> None:
+    raw = valid_config()
+    raw["databases"]["prod"] = {
+        "host": "prod-db.example.invalid",
+        "environment": "production",
+        "username_secret": "PROD_DB_USER",
+        "password_secret": "PROD_DB_PASS",
+    }
+    raw["installations"]["i"]["source_database_endpoint"] = "prod"
+    config = ApplicationConfig.model_validate(raw)
+    assert config.installations["i"].source_database_endpoint == "prod"
+    assert config.installations["i"].allowed_database_endpoints == ["d"]
+
+    raw["installations"]["i"]["source_database_endpoint"] = "d"
+    with pytest.raises(ValidationError, match="source_environment"):
+        ApplicationConfig.model_validate(raw)
+
+
 def test_config_rejects_relative_allowed_root() -> None:
     raw = valid_config()
     raw["allowed_app_roots"] = ["relative/path"]
