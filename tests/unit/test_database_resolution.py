@@ -12,7 +12,7 @@ from wp_modernizer.domain.enums import (
     StepCapability,
     StepStatus,
 )
-from wp_modernizer.domain.models import PlannedStep, RunManifest
+from wp_modernizer.domain.models import PlannedStep, RunManifest, SourceDatabaseConfiguration
 from wp_modernizer.infrastructure.runtime_operations import RuntimeOperations
 from wp_modernizer.pipeline.runner import PipelineRunner
 from wp_modernizer.pipeline.steps import OperationStep
@@ -37,6 +37,8 @@ class Databases:
             "test-b": set(),
         }
         self.mutable_calls: list[tuple[str, str]] = []
+        self.site_url = "https://portal.bireme.org"
+        self.site_url_reads: list[tuple[str, str, str]] = []
 
     def endpoint_ids(self):
         return tuple(self.endpoints)
@@ -53,26 +55,25 @@ class Databases:
     def import_dump(self, endpoint_id, database, source, run_id):
         self.mutable_calls.append(("import", endpoint_id))
 
+    def read_site_url(self, endpoint_id, database, table_prefix):
+        self.site_url_reads.append((endpoint_id, database, table_prefix))
+        return self.site_url
+
 
 class SourceWordPress:
     def __init__(self, *, database: str = "wp_portal_prod", host: str = "prod-db") -> None:
         self.database = database
         self.host = host
-        self.reads: list[tuple[str, Path, str]] = []
+        self.reads: list[tuple[str, Path]] = []
 
     def get_server(self, server_id: str):
         assert server_id == "production-wordpress"
         return SimpleNamespace(environment=Environment.PRODUCTION)
 
-    def get_config(self, server_id: str, path: Path, name: str, run_id: str) -> str:
+    def inspect_config(self, server_id: str, path: Path, run_id: str):
         del run_id
-        self.reads.append((server_id, path, name))
-        return self.database if name == "DB_NAME" else self.host
-
-    def get_site_url(self, server_id: str, path: Path, run_id: str) -> str:
-        del run_id
-        self.reads.append((server_id, path, "siteurl"))
-        return "https://portal.bireme.org"
+        self.reads.append((server_id, path))
+        return SourceDatabaseConfiguration(self.database, self.host, "wp_")
 
 
 def installation(**updates):
@@ -101,7 +102,7 @@ def resolve(databases=None, source=None, item=None, legacy_override=None, recove
         SimpleNamespace(),
         SimpleNamespace(),
         database_overrides={"site": legacy_override} if legacy_override else {},
-        source_wordpress=source,  # type: ignore[arg-type]
+        source_inspection=source,  # type: ignore[arg-type]
     )
     recovery = recovery if recovery is not None else {}
     current = item or installation()
@@ -122,8 +123,8 @@ def test_remote_source_and_test_only_allowlist_are_resolved_conventionally() -> 
     result, recovery, databases, source = resolve()
 
     assert result.status is StepStatus.SUCCEEDED
-    assert [read[2] for read in source.reads] == ["DB_NAME", "siteurl", "DB_HOST"]
-    assert all(read[1] == Path("/remote/example.org/wp-prod/htdocs") for read in source.reads)
+    assert source.reads == [("production-wordpress", Path("/remote/example.org/wp-prod/htdocs"))]
+    assert databases.site_url_reads == [("production-a", "wp_portal_prod", "wp_")]
     assert recovery["site"] == {
         "source_database_endpoint": "production-a",
         "source_database": "wp_portal_prod",
@@ -164,7 +165,7 @@ def test_explicit_source_endpoint_avoids_db_host_heuristics() -> None:
     )
     assert result.status is StepStatus.SUCCEEDED
     assert recovery["site"]["source_database_endpoint"] == "production-a"
-    assert "DB_HOST" not in [read[2] for read in source.reads]
+    assert len(source.reads) == 1
 
 
 def test_missing_source_fails_without_mutation() -> None:
@@ -191,6 +192,15 @@ def test_missing_target_fails() -> None:
     result, _, _, _ = resolve(databases=databases)
     assert result.status is StepStatus.FAILED
     assert "nenhum candidato exato" in result.message.lower()
+
+
+def test_invalid_source_site_url_fails_before_any_mutation() -> None:
+    databases = Databases()
+    databases.site_url = "http://portal.bireme.org"
+    result, _, databases, _ = resolve(databases=databases)
+    assert result.status is StepStatus.FAILED
+    assert "HTTPS" in result.message
+    assert databases.mutable_calls == []
 
 
 def test_ambiguous_target_fails() -> None:
@@ -231,7 +241,7 @@ def test_dry_run_inspects_remote_source_without_copying_files() -> None:
         databases,  # type: ignore[arg-type]
         SimpleNamespace(),
         SimpleNamespace(),
-        source_wordpress=source,  # type: ignore[arg-type]
+        source_inspection=source,  # type: ignore[arg-type]
     )
     mutable_copy = PlannedStep(
         "copy_files",

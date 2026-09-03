@@ -212,6 +212,25 @@ class MySQLAdapter:
             "DB_PASSWORD": self._secrets.get(endpoint.password_secret),
         }
 
+    def read_site_url(self, endpoint_id: str, database: str, table_prefix: str) -> str:
+        if len(table_prefix) > 56 or not re.fullmatch(r"[A-Za-z0-9_]+", table_prefix):
+            raise ConfigurationError("O prefixo de tabelas WordPress é inseguro")
+        table = f"{table_prefix}options"
+        # The identifier is interpolated only after the restrictive allowlist above. The
+        # statement is fixed and read-only; callers cannot supply SQL fragments.
+        sql = f"SELECT option_value FROM `{table}` "  # noqa: S608
+        sql += "WHERE option_name='siteurl' LIMIT 2"
+        values = self._query(endpoint_id, sql, database).splitlines()
+        if not values:
+            raise DatabaseNotFoundError("siteurl não foi encontrada no banco WordPress de origem")
+        unique = set(values)
+        if len(unique) != 1:
+            raise InfrastructureError("siteurl ambígua no banco WordPress de origem")
+        value = values[0].strip()
+        if not value:
+            raise InfrastructureError("siteurl vazia no banco WordPress de origem")
+        return value
+
     def _query(self, endpoint_id: str, sql: str, database: str = "") -> str:
         result = self._run_query(endpoint_id, sql, database)
         self._ensure_success(result.return_code, result.stderr)
