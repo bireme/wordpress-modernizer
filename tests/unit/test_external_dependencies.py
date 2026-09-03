@@ -106,6 +106,8 @@ def test_dry_run_source_inspection_requires_only_its_key_transport() -> None:
     assert Capability.SSH_AVAILABLE in required
     assert Capability.RSYNC_AVAILABLE not in required
     assert Capability.MYSQLDUMP_AVAILABLE not in required
+    assert Capability.PHP_AVAILABLE not in required
+    assert Capability.WPCLI_AVAILABLE not in required
 
 
 def test_password_transport_does_not_require_openssh_or_rsync() -> None:

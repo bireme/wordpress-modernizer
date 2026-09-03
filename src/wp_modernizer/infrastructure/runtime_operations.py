@@ -11,7 +11,7 @@ from wp_modernizer.application.ports import (
     FileSystem,
     FileTransferPort,
     ManagedPluginPort,
-    SourceWordPressPort,
+    SourceInspectionPort,
     WordPressPort,
 )
 from wp_modernizer.domain.database import DatabaseLocator, ProductionTestDatabaseNamingStrategy
@@ -58,7 +58,7 @@ class RuntimeOperations:
         *,
         database_overrides: Dict[str, str] | None = None,
         managed_plugins: ManagedPluginPort | None = None,
-        source_wordpress: SourceWordPressPort | None = None,
+        source_inspection: SourceInspectionPort | None = None,
         filesystem: FileSystem | None = None,
         organizational_domain: str = "bireme.org",
     ) -> None:
@@ -68,7 +68,7 @@ class RuntimeOperations:
         self._parser = parser
         self._database_overrides = database_overrides or {}
         self._managed_plugins = managed_plugins
-        self._source_wordpress = source_wordpress
+        self._source_inspection = source_inspection
         self._filesystem = filesystem
         self._test_url_policy = OrganizationalTestUrlPolicy(organizational_domain)
         self._database_runs: Dict[tuple[str, str], Dict[str, Any]] = {}
@@ -256,35 +256,24 @@ class RuntimeOperations:
         run_id: str,
         recovery_data: Dict[str, Dict[str, str]],
     ) -> StepResult:
-        if self._source_wordpress is None:
+        if self._source_inspection is None:
             return self._failed(
-                step_name, "o adapter de inspeção WordPress remota não está configurado"
+                step_name, "o adapter de inspeção remota da origem não está configurado"
             )
-        server = self._source_wordpress.get_server(installation.source_server)
+        server = self._source_inspection.get_server(installation.source_server)
         if server.environment is not installation.source_environment:
             raise UnsafeOperationError("O ambiente do servidor não coincide com o da origem")
         try:
             source_path = Path(installation.source_path)
-            source_name = self._source_wordpress.get_config(
-                installation.source_server, source_path, "DB_NAME", run_id
-            )
-            source_url = self._source_wordpress.get_site_url(
+            source_config = self._source_inspection.inspect_config(
                 installation.source_server, source_path, run_id
             )
-            test_url = self._test_url_policy.resolve(
-                source_url,
-                str(getattr(installation, "test_url", None))
-                if getattr(installation, "test_url", None)
-                else None,
-            )
+            source_name = source_config.database_name
             configured_source = getattr(installation, "source_database_endpoint", None)
             if configured_source:
                 candidate_ids: tuple[str, ...] = (str(configured_source),)
             else:
-                source_host = self._source_wordpress.get_config(
-                    installation.source_server, source_path, "DB_HOST", run_id
-                )
-                host, port = self._parse_database_host(source_host)
+                host, port = self._parse_database_host(source_config.database_host)
                 candidate_ids = tuple(
                     endpoint_id
                     for endpoint_id in self._databases.endpoint_ids()
@@ -314,6 +303,23 @@ class RuntimeOperations:
             )
         if len(source_endpoints) > 1:
             return self._failed(step_name, "a origem MySQL foi identificada em mais de um endpoint")
+        try:
+            source_url = self._databases.read_site_url(
+                source_endpoints[0], source_name, source_config.table_prefix
+            )
+            test_url = self._test_url_policy.resolve(
+                source_url,
+                str(getattr(installation, "test_url", None))
+                if getattr(installation, "test_url", None)
+                else None,
+            )
+        except (
+            ConfigurationError,
+            DatabaseNotFoundError,
+            InfrastructureError,
+            UnsafeOperationError,
+        ) as exc:
+            return self._failed(step_name, str(exc))
         target_endpoints = [
             endpoint_id
             for endpoint_id in installation.allowed_database_endpoints

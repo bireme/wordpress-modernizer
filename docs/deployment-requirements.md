@@ -18,11 +18,13 @@ Etapas mutáveis omitidas por `--dry-run` não acrescentam dependências. O tran
 senha usa Paramiko e não exige `ssh` nem `rsync`. Uma capability obrigatória ausente interrompe a
 operação antes da criação do run e identifica seu nome no erro.
 
-Para autenticação por chave, a inspeção WordPress remota (inclusive no dry-run) exige `ssh`, mas
+Para autenticação por chave, a inspeção da origem (inclusive no dry-run) exige `ssh`, mas
 não `rsync`; `rsync` só é exigido pela cópia real. Para autenticação por senha, inspeção e cópia
-usam a sessão Paramiko com verificação de host key. O servidor remoto precisa disponibilizar
-`wp` para a conta configurada. A validação final dessa disponibilidade ocorre na leitura remota,
-sem executar operação mutável.
+usam a sessão Paramiko com verificação de host key. O servidor WordPress de PRODUÇÃO não precisa
+disponibilizar `wp` nem PHP CLI: precisa apenas permitir a leitura de `wp-config.php` por SSH/SFTP.
+WP-CLI e PHP CLI são requisitos do servidor operacional/TESTE para diagnóstico e operações locais.
+O endpoint MySQL da origem precisa aceitar as consultas `SELECT` de descoberta com uma conta
+somente-leitura.
 
 | Pergunta | Motivo | Formato esperado | Impacto se ausente |
 |---|---|---|---|
@@ -50,13 +52,13 @@ Antes de liberar uma origem, confirme que:
    `known_hosts_file` configurado;
 4. a entrada usa o formato `[host]:porta` quando a porta não é 22;
 5. a conta possui leitura e travessia sobre toda a árvore de origem;
-6. a conta consegue executar `wp --path=<source_path> config get` e `wp option get` somente para
-   inspeção;
+6. a conta consegue ler `<source_path>/wp-config.php`, sem permissão para alterá-lo;
 7. o destino local possui espaço para manter simultaneamente a cópia existente, o backup e a nova
    cópia;
 8. o `app_root` permite criar `.wp-modernizer-backups`, e a política de retenção/backup externo foi
    definida;
-9. um teste em infraestrutura descartável confirma as exclusões do plano e os timeouts.
+9. a conta MySQL da origem consegue listar o schema e ler `siteurl`, sem privilégios de escrita;
+10. um teste em infraestrutura descartável confirma as exclusões do plano e os timeouts.
 
 Uma chave ausente ou diferente deve interromper o preflight. Não altere `host_key_policy: strict`
 para resolver falhas de autenticação: confiança do host e credenciais do usuário são verificações

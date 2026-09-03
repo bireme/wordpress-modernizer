@@ -15,6 +15,9 @@ from wp_modernizer.domain.errors import (
     InfrastructureError,
     WordPressUnavailableError,
 )
+from wp_modernizer.domain.models import SourceDatabaseConfiguration
+
+from .source_config import parse_source_config
 
 
 class RSyncSSHAdapter:
@@ -70,36 +73,21 @@ class RSyncSSHAdapter:
             )
         return int(result.elapsed_seconds)
 
-    def get_config(self, server_id: str, path: Path, name: str, run_id: str) -> str:
-        self._validate_remote_config_request(path, name)
-        return self._read_wordpress(server_id, path, ["config", "get", name], run_id)
-
-    def get_site_url(self, server_id: str, path: Path, run_id: str) -> str:
-        return self._read_wordpress(
-            server_id,
-            path,
-            ["--skip-plugins", "--skip-themes", "option", "get", "siteurl"],
-            run_id,
-        )
-
-    def _read_wordpress(self, server_id: str, path: Path, arguments: list[str], run_id: str) -> str:
+    def inspect_config(
+        self, server_id: str, path: Path, run_id: str
+    ) -> SourceDatabaseConfiguration:
+        config_path = self._wordpress_config_path(path)
         server = self.get_server(server_id)
         if server.authentication != "key":
             raise ConfigurationError(
                 "O adaptador SSH por chave recebeu um servidor com autenticação incompatível"
             )
-        if (
-            not path.is_absolute()
-            or ".." in path.parts
-            or any(character in str(path) for character in "\r\n\x00")
-        ):
-            raise ConfigurationError("O caminho remoto WordPress deve ser absoluto e seguro")
         username = self._secrets.get(server.username_secret)
         if not re.fullmatch(r"[A-Za-z0-9._@+-]+", username):
             raise ConfigurationError(
                 "O usuário SSH fornecido pelo segredo contém caracteres inválidos"
             )
-        remote_command = shlex.join(["wp", f"--path={path}", *arguments])
+        remote_command = shlex.join(["cat", "--", str(config_path)])
         with self._ssh_config(server, username) as config_path:
             result = self._runner.run(
                 ["ssh", "-F", str(config_path), "wp-modernizer-source", "--", remote_command],
@@ -107,13 +95,10 @@ class RSyncSSHAdapter:
                 correlation_id=run_id,
             )
         if result.return_code != 0:
-            raise WordPressUnavailableError(
-                "não foi possível ler a configuração WordPress na origem remota"
-            )
-        value = result.stdout.strip()
-        if not value:
-            raise WordPressUnavailableError("a configuração WordPress remota está vazia")
-        return value
+            raise WordPressUnavailableError("não foi possível ler wp-config.php na origem remota")
+        if not result.stdout or len(result.stdout.encode("utf-8")) > 1024 * 1024:
+            raise WordPressUnavailableError("wp-config.php remoto está vazio ou excede o limite")
+        return parse_source_config(result.stdout)
 
     @contextmanager
     def _ssh_config(self, server: ServerConfig, username: str) -> Iterator[Path]:
@@ -141,15 +126,14 @@ class RSyncSSHAdapter:
                 config_path.unlink(missing_ok=True)
 
     @staticmethod
-    def _validate_remote_config_request(path: Path, name: str) -> None:
+    def _wordpress_config_path(path: Path) -> Path:
         if (
             not path.is_absolute()
             or ".." in path.parts
             or any(character in str(path) for character in "\r\n\x00")
         ):
             raise ConfigurationError("O caminho remoto WordPress deve ser absoluto e seguro")
-        if name not in {"DB_NAME", "DB_HOST"}:
-            raise ConfigurationError("A leitura remota solicitou uma constante não autorizada")
+        return path / "wp-config.php"
 
     @staticmethod
     def _config_value(value: str) -> str:

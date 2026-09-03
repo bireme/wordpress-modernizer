@@ -135,7 +135,7 @@ class ModernizerService:
             installation_id,
             item.source_environment,
             item.source_server,
-            item.source_database_endpoint or "discovered-from-remote-wordpress",
+            item.source_database_endpoint or "discovered-from-source-config",
             installations,
             pending,
         )

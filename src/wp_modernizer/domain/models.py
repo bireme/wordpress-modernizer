@@ -63,6 +63,15 @@ class DatabaseProbeResult:
 
 
 @dataclass(frozen=True)
+class SourceDatabaseConfiguration:
+    """Non-secret values read from a source WordPress configuration file."""
+
+    database_name: str
+    database_host: str
+    table_prefix: str
+
+
+@dataclass(frozen=True)
 class CapabilityReport:
     results: Tuple[ProbeResult, ...]
     health: HealthStatus
