@@ -105,6 +105,10 @@ class FakeSSHClient:
         self.loaded_system_keys = False
         self.loaded_host_keys = []
         self.closed = False
+        self.exec_calls: list[tuple[str, float]] = []
+        self.exec_stdout = b""
+        self.exec_stderr = b""
+        self.exec_status = 0
 
     def load_system_host_keys(self) -> None:
         self.loaded_system_keys = True
@@ -122,6 +126,27 @@ class FakeSSHClient:
 
     def open_sftp(self) -> FakeSFTP:
         return self.sftp
+
+    def exec_command(self, command: str, timeout: float):
+        self.exec_calls.append((command, timeout))
+
+        class Stream:
+            def __init__(self, payload: bytes, status: int = 0) -> None:
+                self.payload = payload
+                self.channel = self
+                self.status = status
+
+            def read(self) -> bytes:
+                return self.payload
+
+            def recv_exit_status(self) -> int:
+                return self.status
+
+        return (
+            Stream(b""),
+            Stream(self.exec_stdout, self.exec_status),
+            Stream(self.exec_stderr),
+        )
 
     def close(self) -> None:
         self.closed = True
@@ -498,6 +523,36 @@ def test_file_transfer_router_selects_authentication_explicitly(tmp_path: Path) 
 
     assert runner.calls[0][0] == "rsync"
     assert client.connect_kwargs["password"] == "password"
+
+
+def test_key_ssh_reads_remote_wordpress_without_credentials_in_argv() -> None:
+    key = password_server().model_copy(update={"authentication": "key", "password_secret": None})
+    runner = FakeCommandRunner([FakeCommandResult(stdout="wp_portal_prod\n")])
+    adapter = RSyncSSHAdapter({"source": key}, Secrets(), runner)
+
+    value = adapter.get_config("source", Path("/source/htdocs"), "DB_NAME", "run-1")
+
+    assert value == "wp_portal_prod"
+    assert runner.calls[0][0] == "ssh"
+    assert "config get DB_NAME" in runner.calls[0][-1]
+    assert "password" not in " ".join(runner.calls[0])
+    assert "user" not in " ".join(runner.calls[0])
+
+
+def test_password_ssh_reads_remote_wordpress_via_verified_session() -> None:
+    client = FakeSSHClient()
+    client.exec_stdout = b"prod-db:3307\n"
+    adapter = PasswordSFTPAdapter(
+        {"source": password_server()}, Secrets(), client_factory=lambda: client
+    )
+
+    value = adapter.get_config("source", Path("/source/htdocs"), "DB_HOST", "run-1")
+
+    assert value == "prod-db:3307"
+    assert client.loaded_system_keys
+    assert client.connect_kwargs["password"] == "password"
+    assert client.exec_calls == [("wp --path=/source/htdocs config get DB_HOST", 60)]
+    assert "password" not in client.exec_calls[0][0]
 
 
 def test_local_filesystem_fingerprint_changes_and_remove(tmp_path: Path) -> None:

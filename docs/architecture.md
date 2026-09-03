@@ -10,8 +10,11 @@ composição.
 
 A composition root em `cli.main.build_service` liga a configuração ao
 `EnvironmentSecretProvider`, cria os adaptadores SSH/MySQL/WP-CLI, injeta um roteador de
-transporte que escolhe chave ou senha explicitamente em
-`RuntimeOperations` pelas portas da aplicação e, por fim, constrói `ModernizerService`.
+transporte que escolhe chave ou senha explicitamente em `RuntimeOperations` pelas portas da
+aplicação e, por fim, constrói `ModernizerService`. O mesmo roteador implementa uma porta separada
+de inspeção WordPress de origem: ela só expõe as leituras remotas necessárias e não oferece
+operações de atualização. O filesystem implementa o contrato de criação e verificação de backup
+imutável; o runtime só libera a substituição depois de receber essa evidência.
 
 As dependências apontam para dentro. Objetos falsos implementam os mesmos `Protocol`s e permitem
 testar todas as regras de segurança sem WordPress. Dataclasses modelam valores estáveis do

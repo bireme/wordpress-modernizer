@@ -68,6 +68,9 @@ def build_service(
         InstallationPathParser(config.allowed_app_roots),
         database_overrides=config.database_overrides,
         managed_plugins=ManagedPluginRefresher(filesystem, command_runner),
+        source_wordpress=ssh,
+        filesystem=filesystem,
+        organizational_domain=config.organizational_domain,
     )
     return ModernizerService(
         config,

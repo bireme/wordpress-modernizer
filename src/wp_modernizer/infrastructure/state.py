@@ -212,7 +212,9 @@ class JsonStateStore:
             source_environment=Environment(raw["source_environment"]),
             destination_environment=Environment(raw["destination_environment"]),
             source_server=raw["source_server"],
-            database_endpoint=raw.get("database_endpoint"),
+            source_database_endpoint=raw.get(
+                "source_database_endpoint", raw.get("database_endpoint")
+            ),
             installations=installations,
             steps=tuple(cls._deserialize_planned_step(item) for item in raw.get("steps", [])),
             pending_operations=pending,
