@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Sequence
+from typing import Dict, Sequence, cast
 
-from wp_modernizer.application.ports import FileTransferPort
+from wp_modernizer.application.ports import FileTransferPort, SourceWordPressPort
 from wp_modernizer.config.models import ServerConfig
 from wp_modernizer.domain.errors import ConfigurationError
 
@@ -41,3 +41,13 @@ class FileTransferRouter:
         return self._transports[server.authentication].copy_from(
             server_id, source, destination_parent, excludes, run_id
         )
+
+    def get_config(self, server_id: str, path: Path, name: str, run_id: str) -> str:
+        server = self.get_server(server_id)
+        transport = self._transports[server.authentication]
+        return cast(SourceWordPressPort, transport).get_config(server_id, path, name, run_id)
+
+    def get_site_url(self, server_id: str, path: Path, run_id: str) -> str:
+        server = self.get_server(server_id)
+        transport = self._transports[server.authentication]
+        return cast(SourceWordPressPort, transport).get_site_url(server_id, path, run_id)

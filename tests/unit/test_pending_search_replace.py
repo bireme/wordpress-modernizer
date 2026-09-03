@@ -232,3 +232,29 @@ def test_native_dry_run_validates_without_completing_pending_operation() -> None
     assert result.metrics == {"potential_replacements": 7.0}
     assert wordpress.search_calls[0]["dry_run"] is True
     assert manifest.pending_operations[0].completed is False
+
+
+def test_native_dry_run_uses_remote_resolution_not_existing_test_url() -> None:
+    wordpress = RecordingWordPress(old_url="https://boletin.teste.bireme.org")
+    context = execution_context()
+    context["recovery_data"] = {
+        "site": {
+            "source_url": "https://boletin.bireme.org",
+            "test_url": "https://boletin.teste.bireme.org",
+        }
+    }
+    context["planned_step"] = PlannedStep(
+        "pending_search_replace",
+        True,
+        True,
+        "",
+        "",
+        "site",
+        capability=StepCapability.MUTABLE_WITH_NATIVE_DRY_RUN,
+    )
+
+    result = operation(wordpress).validate("pending_search_replace", context)
+
+    assert result.status is StepStatus.VALIDATED
+    assert wordpress.search_calls[0]["old_url"] == "https://boletin.bireme.org"
+    assert wordpress.search_calls[0]["new_url"] == "https://boletin.teste.bireme.org"

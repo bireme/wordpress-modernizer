@@ -28,11 +28,13 @@ def required_capabilities(
         Capability.MYSQL_AVAILABLE,
     }
     for step in active_steps:
-        if step.name == "copy_files":
+        if step.name in {"copy_files", "snapshot_source_database"}:
             installation = config.installations[step.installation_id]
             server = config.servers[installation.source_server]
             if server.authentication == "key":
-                required.update((Capability.SSH_AVAILABLE, Capability.RSYNC_AVAILABLE))
+                required.add(Capability.SSH_AVAILABLE)
+                if step.name == "copy_files":
+                    required.add(Capability.RSYNC_AVAILABLE)
         elif step.name == "copy_database":
             required.add(Capability.MYSQLDUMP_AVAILABLE)
         elif step.name == "managed_plugin_refresh" and config.managed_plugins:

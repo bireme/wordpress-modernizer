@@ -16,6 +16,13 @@ servers:
     # known_hosts_file: /etc/wp-modernizer/known_hosts
 databases:
   # Todos os schemas devem ser provisionados previamente pela infraestrutura.
+  # Endpoint somente-leitura usado para dump da origem. Ele NÃO pertence à allowlist de destino.
+  production-db-example:
+    host: db-production.example.invalid
+    port: 3306
+    environment: production
+    username_secret: PROD_DB_EXAMPLE_USERNAME
+    password_secret: PROD_DB_EXAMPLE_PASSWORD
   test-db-example:
     host: db-test.example.invalid
     port: 3306
@@ -29,9 +36,13 @@ installations:
     source_path: /home/apps/example.org/wp-main/htdocs
     destination_path: /home/apps/example.org/wp-main-test/htdocs
     destination_environment: test
+    # Opcional quando DB_HOST remoto corresponde exatamente a um único endpoint cadastrado.
+    # Recomendado para aliases DNS, sockets ou topologias em que host/porta não sejam únicos.
+    source_database_endpoint: production-db-example
     # Omitido no caso convencional: https://boletin.bireme.org vira
     # https://boletin.teste.bireme.org. Para uma exceção, declare explicitamente:
     # test_url: https://destino-excepcional.example.org
+    # Exclusivamente endpoints de TESTE autorizados como destino destrutivo.
     allowed_database_endpoints: [test-db-example]
     # Nomes completos alternativos, comparados de forma exata após o candidato *_tst.
     database_aliases: []

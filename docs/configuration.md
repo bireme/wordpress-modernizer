@@ -7,8 +7,10 @@ implementar `SecretProvider`.
 
 Cada instalação informa um servidor de origem, um ambiente de origem (`production` ou `test`),
 um caminho absoluto de origem, um destino de TESTE absoluto e IDs permitidos de endpoints de
-banco de dados de teste. Apelidos e substituições exatas de bancos são explícitos. Por padrão,
-o modernizer opera somente sobre schemas previamente provisionados pela infraestrutura.
+banco de dados de teste. `allowed_database_endpoints` é validado como uma allowlist exclusivamente
+de destinos TESTE; incluir PRODUÇÃO nesse campo é erro de configuração. Apelidos e substituições
+exatas de bancos são explícitos. Por padrão, o modernizer opera somente sobre schemas previamente
+provisionados pela infraestrutura.
 
 ## Diretório de estado
 
@@ -26,7 +28,30 @@ inferir genericamente a persistência do filesystem.
 
 ## Bancos de dados
 
-O nome da origem é sempre descoberto de `DB_NAME`. Quando ele segue exatamente
+A origem e o destino têm resoluções independentes. A porta de inspeção WordPress remota executa
+somente leituras no `source_server` e no `source_path`: obtém `DB_NAME`, `DB_HOST` e `siteurl`
+diretamente da instalação de origem, inclusive em `--dry-run`. Ela usa a mesma autenticação SSH e
+a mesma verificação de host key do transporte, sem copiar primeiro a árvore para o destino.
+
+Se `source_database_endpoint` estiver definido, ele identifica o endpoint cadastrado usado para
+validar o schema e produzir o dump somente-leitura. Seu `environment` deve coincidir com
+`source_environment`. Se estiver omitido, `DB_HOST` remoto deve corresponder exatamente ao
+host/porta de um único endpoint cadastrado no mesmo ambiente e o `DB_NAME` deve existir nele.
+Aliases DNS, sockets MySQL, formatos não suportados, ausência e múltiplas correspondências falham
+sem fallback; nesses casos configure `source_database_endpoint` explicitamente.
+
+```yaml
+installations:
+  example-site:
+    source_database_endpoint: production-db-example
+    allowed_database_endpoints: [test-db-example]
+```
+
+As credenciais do endpoint de origem são necessárias para consultas de existência e `mysqldump`,
+mas nunca autorizam importação: `MySQLAdapter.import_dump` continua recusando qualquer endpoint
+que não seja TESTE.
+
+O nome da origem é sempre descoberto do `DB_NAME` remoto. Quando ele segue exatamente
 `wp_<name>_prod`, o candidato automático é `wp_<name>_tst`. A busca usa igualdade exata e ocorre
 somente nos schemas dos endpoints autorizados cujo `environment` é `test`; não existe busca por
 similaridade.
@@ -40,6 +65,9 @@ ambiguidade sempre interrompe a operação para provisionamento/correção pela 
 Não existe opção pública nem comando para criação de banco. Configurações antigas contendo
 `allow_create`, com qualquer valor, são recusadas com uma orientação explícita de migração:
 remover a chave e solicitar o provisionamento do schema de TESTE.
+
+`database_override` e o mapa legado `database_overrides` alteram apenas o nome de destino. Eles
+nunca substituem `DB_NAME`, `DB_HOST` nem `source_database_endpoint` da origem.
 
 `organizational_domain` declara a fronteira DNS usada pela convenção de URLs de TESTE. Para
 `bireme.org`, a URL de produção `https://boletin.bireme.org` resulta em

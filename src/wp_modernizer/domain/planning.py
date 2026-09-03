@@ -13,7 +13,7 @@ class MigrationPlanner:
         installation_id: str,
         source_environment: Environment,
         source_server: str,
-        database_endpoint: str,
+        source_database_endpoint: str,
         installations: Iterable[WordPressInstallation],
         pending_operations: Tuple[PendingOperation, ...] = (),
     ) -> MigrationPlan:
@@ -99,7 +99,7 @@ class MigrationPlanner:
             source_environment=source_environment,
             destination_environment=Environment.TEST,
             source_server=source_server,
-            database_endpoint=database_endpoint,
+            source_database_endpoint=source_database_endpoint,
             installations=nodes,
             steps=tuple(steps),
             pending_operations=pending_operations,

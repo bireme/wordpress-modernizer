@@ -97,6 +97,17 @@ def test_dry_run_does_not_require_tools_used_only_by_skipped_mutations() -> None
     assert Capability.GIT_AVAILABLE not in required
 
 
+def test_dry_run_source_inspection_requires_only_its_key_transport() -> None:
+    required = required_capabilities(
+        _config(),
+        (_step("snapshot_source_database", StepCapability.READ_ONLY),),
+        dry_run=True,
+    )
+    assert Capability.SSH_AVAILABLE in required
+    assert Capability.RSYNC_AVAILABLE not in required
+    assert Capability.MYSQLDUMP_AVAILABLE not in required
+
+
 def test_password_transport_does_not_require_openssh_or_rsync() -> None:
     required = required_capabilities(
         _config(authentication="password"),
