@@ -122,12 +122,8 @@ class PipelineRunner:
             self._state.save_manifest(manifest)
             expected_status = StepStatus.VALIDATED if manifest.dry_run else StepStatus.EXECUTED
             regressed = self._regressed(before.health, after.health)
-            allowed_transient_health = (
-                    regressed and after.health in step.allowed_health_regressions
-            )
-            if result.status is not expected_status or (
-                    regressed and not allowed_transient_health
-            ):
+            allowed_transient_health = regressed and after.health in step.allowed_health_regressions
+            if result.status is not expected_status or (regressed and not allowed_transient_health):
                 manifest.failed_step = step.name
                 manifest.status = RunStatus.UPDATE_FAILED_PRESERVED
                 manifest.finished_at = self._clock.now_iso()
