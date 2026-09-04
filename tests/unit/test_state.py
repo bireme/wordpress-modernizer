@@ -14,6 +14,8 @@ from wp_modernizer.domain.enums import (
 from wp_modernizer.domain.errors import StateStoreUnavailableError
 from wp_modernizer.domain.models import (
     ManagedPlugin,
+    ManagedPluginChange,
+    ManagedPluginChanges,
     ManagedPluginResult,
     RunManifest,
     StepResult,
@@ -111,6 +113,19 @@ def test_state_round_trip_and_layout(tmp_path: Path) -> None:
             "skip explícito",
         )
     ]
+    replacement = ManagedPlugin(
+        "managed",
+        "https://example.invalid/repo.git",
+        "stable",
+        "replace_from_git",
+        "skip",
+    )
+    manifest.managed_plugin_changes = ManagedPluginChanges(
+        added=(replacement,),
+        removed=(manifest.managed_plugins[0],),
+        changed=(ManagedPluginChange(manifest.managed_plugins[0], replacement),),
+    )
+    manifest.configuration_snapshot = {"installations": {"site": {"path": "/site"}}}
     store.create_run(manifest)
     store.save_checkpoint("site", "run-id", manifest.steps[0], health(HealthStatus.HEALTHY))
     loaded = store.load_manifest("site", "run-id")
@@ -120,6 +135,8 @@ def test_state_round_trip_and_layout(tmp_path: Path) -> None:
     assert loaded.widget_diff == manifest.widget_diff
     assert loaded.managed_plugins == manifest.managed_plugins
     assert loaded.managed_plugin_results == manifest.managed_plugin_results
+    assert loaded.managed_plugin_changes == manifest.managed_plugin_changes
+    assert loaded.configuration_snapshot == manifest.configuration_snapshot
     assert (tmp_path / "site" / "runs" / "run-id" / "checkpoints").is_dir()
 
 
