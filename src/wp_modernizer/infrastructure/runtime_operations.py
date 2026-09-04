@@ -12,6 +12,7 @@ from wp_modernizer.application.ports import (
     FileTransferPort,
     ManagedPluginPort,
     SourceInspectionPort,
+    WordPressConfigWriterPort,
     WordPressPort,
 )
 from wp_modernizer.domain.database import DatabaseLocator, ProductionTestDatabaseNamingStrategy
@@ -60,6 +61,7 @@ class RuntimeOperations:
         managed_plugins: ManagedPluginPort | None = None,
         source_inspection: SourceInspectionPort | None = None,
         filesystem: FileSystem | None = None,
+        config_writer: WordPressConfigWriterPort | None = None,
         organizational_domain: str = "bireme.org",
     ) -> None:
         self._files = files
@@ -70,6 +72,7 @@ class RuntimeOperations:
         self._managed_plugins = managed_plugins
         self._source_inspection = source_inspection
         self._filesystem = filesystem
+        self._config_writer = config_writer
         self._test_url_policy = OrganizationalTestUrlPolicy(organizational_domain)
         self._database_runs: Dict[tuple[str, str], Dict[str, Any]] = {}
 
@@ -571,7 +574,12 @@ class RuntimeOperations:
             state.get("target_database_endpoint", state.get("target_endpoint", "")),
             state["target_database"],
         )
-        self._wordpress.set_config(path, values, run_id)
+        if self._config_writer is None:
+            return self._failed(
+                step_name,
+                "o writer de wp-config.php não está configurado",
+            )
+        self._config_writer.set_config(path, values, run_id)
         self._database_runs.pop(key, None)
         return self._ok(step_name, True, "wp-config aponta para o banco do ambiente de teste")
 
