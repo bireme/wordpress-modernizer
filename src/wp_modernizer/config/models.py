@@ -1,7 +1,15 @@
 from pathlib import Path
 from typing import Dict, List, Literal, Mapping, Optional
 
-from pydantic import AnyHttpUrl, BaseModel, Field, ValidationInfo, field_validator, model_validator
+from pydantic import (
+    AnyHttpUrl,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from wp_modernizer.domain.enums import Environment
 from wp_modernizer.domain.test_url import OrganizationalTestUrlPolicy
@@ -128,7 +136,9 @@ class ObservabilityConfig(BaseModel):
     otel_enabled: bool = False
 
 
-class ApplicationConfig(BaseModel):
+class ServerEnvironmentConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     state_directory: Path = Path("state")
     organizational_domain: str = "bireme.org"
     allowed_app_roots: List[Path]
@@ -136,7 +146,6 @@ class ApplicationConfig(BaseModel):
     databases: Dict[str, DatabaseConfig]
     installations: Dict[str, InstallationConfig]
     database_overrides: Dict[str, str] = Field(default_factory=dict)
-    managed_plugins: List[ManagedPluginConfig] = Field(default_factory=list)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
 
     @field_validator("organizational_domain")
@@ -199,3 +208,13 @@ class ApplicationConfig(BaseModel):
                         f"o banco de origem de {key} não pertence a source_environment"
                     )
         return value
+
+
+class PluginsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    managed_plugins: List[ManagedPluginConfig]
+
+
+class ApplicationConfig(ServerEnvironmentConfig):
+    managed_plugins: List[ManagedPluginConfig] = Field(default_factory=list)
