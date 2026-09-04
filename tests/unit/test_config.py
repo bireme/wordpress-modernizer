@@ -1,12 +1,18 @@
+from pathlib import Path
+
 import pytest
+import yaml
 from pydantic import ValidationError
 
+from wp_modernizer.config import loader as config_loader
+from wp_modernizer.config.loader import load_config
 from wp_modernizer.config.models import (
     ApplicationConfig,
     DatabaseConfig,
     ManagedPluginConfig,
     ServerConfig,
 )
+from wp_modernizer.domain.errors import ConfigurationError
 
 
 def valid_config():
@@ -37,6 +43,133 @@ def valid_config():
             }
         },
     }
+
+
+def write_yaml(path: Path, content: object) -> Path:
+    path.write_text(yaml.safe_dump(content), encoding="utf-8")
+    return path
+
+
+def load_with_plugins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plugins: object
+) -> ApplicationConfig:
+    config_path = write_yaml(tmp_path / "config.yaml", valid_config())
+    plugins_path = write_yaml(tmp_path / "plugins.yaml", plugins)
+    monkeypatch.setattr(config_loader, "PLUGINS_CONFIG_PATH", plugins_path)
+    return load_config(config_path)
+
+
+def test_load_config_composes_server_config_and_managed_plugins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = load_with_plugins(
+        tmp_path,
+        monkeypatch,
+        {
+            "managed_plugins": [
+                {
+                    "slug": "shared-plugin",
+                    "repository": "https://example.invalid/shared-plugin.git",
+                    "branch": "stable",
+                    "strategy": "replace_from_git",
+                    "dirty_policy": "skip",
+                }
+            ]
+        },
+    )
+
+    assert config.servers["s"].host == "source.example.invalid"
+    assert len(config.managed_plugins) == 1
+    assert config.managed_plugins[0].slug == "shared-plugin"
+    assert config.managed_plugins[0].branch == "stable"
+
+
+def test_load_config_does_not_require_managed_plugins_in_server_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = load_with_plugins(tmp_path, monkeypatch, {"managed_plugins": []})
+
+    assert config.managed_plugins == []
+
+
+def test_load_config_rejects_managed_plugins_in_server_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = valid_config()
+    raw["managed_plugins"] = []
+    config_path = write_yaml(tmp_path / "config.yaml", raw)
+    monkeypatch.setattr(config_loader, "PLUGINS_CONFIG_PATH", tmp_path / "plugins.yaml")
+
+    with pytest.raises(ConfigurationError, match=r"(?s)config\.yaml.*managed_plugins"):
+        load_config(config_path)
+
+
+def test_missing_plugins_config_raises_configuration_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = write_yaml(tmp_path / "config.yaml", valid_config())
+    monkeypatch.setattr(config_loader, "PLUGINS_CONFIG_PATH", tmp_path / "missing-plugins.yaml")
+
+    with pytest.raises(ConfigurationError, match=r"ler plugins\.yaml"):
+        load_config(config_path)
+
+
+def test_unreadable_plugins_config_raises_configuration_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = write_yaml(tmp_path / "config.yaml", valid_config())
+    plugins_path = tmp_path / "plugins.yaml"
+    plugins_path.mkdir()
+    monkeypatch.setattr(config_loader, "PLUGINS_CONFIG_PATH", plugins_path)
+
+    with pytest.raises(ConfigurationError, match=r"ler plugins\.yaml"):
+        load_config(config_path)
+
+
+def test_invalid_plugins_yaml_raises_configuration_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = write_yaml(tmp_path / "config.yaml", valid_config())
+    plugins_path = tmp_path / "plugins.yaml"
+    plugins_path.write_text("managed_plugins: [", encoding="utf-8")
+    monkeypatch.setattr(config_loader, "PLUGINS_CONFIG_PATH", plugins_path)
+
+    with pytest.raises(ConfigurationError, match=r"YAML inválido em plugins\.yaml"):
+        load_config(config_path)
+
+
+@pytest.mark.parametrize("plugins", [[], {}, {"managed_plugins": "invalid"}])
+def test_invalid_plugins_structure_raises_configuration_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plugins: object
+) -> None:
+    config_path = write_yaml(tmp_path / "config.yaml", valid_config())
+    plugins_path = write_yaml(tmp_path / "plugins.yaml", plugins)
+    monkeypatch.setattr(config_loader, "PLUGINS_CONFIG_PATH", plugins_path)
+
+    with pytest.raises(ConfigurationError, match=r"plugins\.yaml"):
+        load_config(config_path)
+
+
+def test_plugins_config_preserves_managed_plugin_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with pytest.raises(ConfigurationError, match=r"(?s)plugins\.yaml.*slug"):
+        load_with_plugins(
+            tmp_path,
+            monkeypatch,
+            {"managed_plugins": [{"slug": "../escape", "repository": "repo"}]},
+        )
+
+
+def test_fixed_plugins_path_is_independent_of_current_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixed_path = config_loader.PLUGINS_CONFIG_PATH
+    monkeypatch.chdir(tmp_path)
+
+    assert fixed_path.is_absolute()
+    config = load_config(write_yaml(tmp_path / "config.yaml", valid_config()))
+    assert config.managed_plugins
 
 
 def test_config_rejects_production_destination() -> None:
