@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Protocol
 
 from wp_modernizer.application.ports import MutableOperations
-from wp_modernizer.domain.enums import Capability, StepCapability
+from wp_modernizer.domain.enums import Capability, HealthStatus, StepCapability
 from wp_modernizer.domain.models import PlannedStep, StepResult
 
 
@@ -31,6 +31,9 @@ class Step(Protocol):
 
     @property
     def installation_id(self) -> str: ...
+
+    @property
+    def allowed_health_regressions(self) -> frozenset[HealthStatus]: ...
 
     def execute(self, context: Dict[str, Any]) -> StepResult: ...
 
@@ -82,6 +85,10 @@ class OperationStep:
     @property
     def installation_id(self) -> str:
         return self.planned_step.installation_id
+
+    @property
+    def allowed_health_regressions(self) -> frozenset[HealthStatus]:
+        return self.planned_step.allowed_health_regressions
 
     def execute(self, context: Dict[str, Any]) -> StepResult:
         step_context = dict(context)

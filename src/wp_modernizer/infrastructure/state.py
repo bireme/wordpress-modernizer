@@ -161,6 +161,9 @@ class JsonStateStore:
             dry_run_requirements=tuple(
                 Capability(item) for item in raw.get("dry_run_requirements", [])
             ),
+            allowed_health_regressions=frozenset(
+                HealthStatus(item) for item in raw.get("allowed_health_regressions", [])
+            ),
         )
 
     @staticmethod

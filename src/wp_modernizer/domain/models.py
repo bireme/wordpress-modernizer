@@ -104,6 +104,7 @@ class PlannedStep:
     excludes: Tuple[Path, ...] = ()
     capability: Optional[StepCapability] = None
     dry_run_requirements: Tuple[Capability, ...] = ()
+    allowed_health_regressions: FrozenSet[HealthStatus] = frozenset()
 
     def __post_init__(self) -> None:
         capability = self.capability
