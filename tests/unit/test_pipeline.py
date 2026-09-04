@@ -29,6 +29,29 @@ def manifest(dry_run=False):
     return RunManifest("run", "site", Operation.UPDATE, RunStatus.RUNNING, "now", dry_run)
 
 
+class RecordingReporter:
+    def __init__(self) -> None:
+        self.events = []
+
+    def run_started(self, current, total_steps):
+        self.events.append(("run_started", current.run_id, total_steps))
+
+    def capabilities_checked(self, stage, report):
+        self.events.append(("capabilities_checked", stage, report.health))
+
+    def step_started(self, name, index, total):
+        self.events.append(("step_started", name, index, total))
+
+    def step_finished(self, result, index, total):
+        self.events.append(("step_finished", result.name, result.status, index, total))
+
+    def run_finished(self, current):
+        self.events.append(("run_finished", current.status))
+
+    def run_failed(self, current, reason):
+        self.events.append(("run_failed", current.status, reason))
+
+
 def test_successful_pipeline_checkpoints_every_step() -> None:
     state = FakeStateStore()
     operations = FakeOperations()
@@ -47,6 +70,82 @@ def test_successful_pipeline_checkpoints_every_step() -> None:
     # One initial probe plus one post-step probe. The latter probe is the final
     # validation; there is no synthetic final-health-check step.
     assert probe.calls == [Path("/site"), Path("/site"), Path("/site")]
+
+
+def test_reporter_receives_ordered_pipeline_lifecycle() -> None:
+    reporter = RecordingReporter()
+    result = PipelineRunner(
+        FakeProbe([health(HealthStatus.HEALTHY)]),
+        FakeStateStore(),
+        FakeFileSystem(),
+        FakeClock(),
+    ).run(
+        manifest(),
+        Path("/site"),
+        [OperationStep("one", FakeOperations()), OperationStep("two", FakeOperations())],
+        {},
+        reporter=reporter,
+    )
+
+    lifecycle = [event[0] for event in reporter.events]
+    assert lifecycle == [
+        "run_started",
+        "capabilities_checked",
+        "step_started",
+        "capabilities_checked",
+        "step_finished",
+        "step_started",
+        "capabilities_checked",
+        "step_finished",
+        "run_finished",
+    ]
+    assert result.status is RunStatus.EXECUTED
+
+
+def test_reporter_receives_failed_step_and_final_failure() -> None:
+    reporter = RecordingReporter()
+    PipelineRunner(
+        FakeProbe([health(HealthStatus.HEALTHY)]),
+        FakeStateStore(),
+        FakeFileSystem(),
+        FakeClock(),
+    ).run(
+        manifest(),
+        Path("/site"),
+        [OperationStep("broken", FakeOperations(fail_at="broken"))],
+        {},
+        reporter=reporter,
+    )
+
+    assert ("step_finished", "broken", StepStatus.FAILED, 1, 1) in reporter.events
+    assert reporter.events[-1][0] == "run_failed"
+
+
+def test_reporter_receives_failure_when_step_raises() -> None:
+    class RaisingOperations(FakeOperations):
+        def execute(self, step_name, context):
+            raise RuntimeError("external command exploded")
+
+    reporter = RecordingReporter()
+    with pytest.raises(RuntimeError, match="external command exploded"):
+        PipelineRunner(
+            FakeProbe([health(HealthStatus.HEALTHY)]),
+            FakeStateStore(),
+            FakeFileSystem(),
+            FakeClock(),
+        ).run(
+            manifest(),
+            Path("/site"),
+            [OperationStep("broken", RaisingOperations())],
+            {},
+            reporter=reporter,
+        )
+
+    assert reporter.events[-1] == (
+        "run_failed",
+        RunStatus.RUNNING,
+        "external command exploded",
+    )
 
 
 def test_step_recovery_state_is_persisted_before_the_next_mutation() -> None:
