@@ -167,6 +167,19 @@ class ManagedPluginResult:
     revision: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class ManagedPluginChange:
+    before: ManagedPlugin
+    after: ManagedPlugin
+
+
+@dataclass(frozen=True)
+class ManagedPluginChanges:
+    added: Tuple[ManagedPlugin, ...] = ()
+    removed: Tuple[ManagedPlugin, ...] = ()
+    changed: Tuple[ManagedPluginChange, ...] = ()
+
+
 @dataclass
 class RunManifest:
     run_id: str
@@ -197,3 +210,5 @@ class RunManifest:
     resume_source_failed_step: Optional[str] = None
     managed_plugins: List[ManagedPlugin] = field(default_factory=list)
     managed_plugin_results: List[ManagedPluginResult] = field(default_factory=list)
+    managed_plugin_changes: Optional[ManagedPluginChanges] = None
+    configuration_snapshot: Optional[Dict[str, object]] = None

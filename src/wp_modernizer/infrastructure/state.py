@@ -22,6 +22,8 @@ from wp_modernizer.domain.errors import StateStoreUnavailableError
 from wp_modernizer.domain.models import (
     CapabilityReport,
     ManagedPlugin,
+    ManagedPluginChange,
+    ManagedPluginChanges,
     ManagedPluginResult,
     MigrationPlan,
     PendingOperation,
@@ -145,6 +147,36 @@ class JsonStateStore:
                 )
                 for item in raw.get("managed_plugin_results", [])
             ],
+            managed_plugin_changes=self._deserialize_managed_plugin_changes(
+                raw.get("managed_plugin_changes")
+            ),
+            configuration_snapshot=raw.get("configuration_snapshot"),
+        )
+
+    @classmethod
+    def _deserialize_managed_plugin_changes(cls, raw: Any) -> ManagedPluginChanges | None:
+        if raw is None:
+            return None
+        return ManagedPluginChanges(
+            added=tuple(cls._deserialize_managed_plugin(item) for item in raw.get("added", [])),
+            removed=tuple(cls._deserialize_managed_plugin(item) for item in raw.get("removed", [])),
+            changed=tuple(
+                ManagedPluginChange(
+                    before=cls._deserialize_managed_plugin(item["before"]),
+                    after=cls._deserialize_managed_plugin(item["after"]),
+                )
+                for item in raw.get("changed", [])
+            ),
+        )
+
+    @staticmethod
+    def _deserialize_managed_plugin(raw: Dict[str, Any]) -> ManagedPlugin:
+        return ManagedPlugin(
+            raw["slug"],
+            raw["repository"],
+            raw["branch"],
+            raw["strategy"],
+            raw["dirty_policy"],
         )
 
     @staticmethod

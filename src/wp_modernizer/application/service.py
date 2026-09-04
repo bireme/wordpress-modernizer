@@ -29,6 +29,8 @@ from wp_modernizer.domain.errors import (
 )
 from wp_modernizer.domain.models import (
     ManagedPlugin,
+    ManagedPluginChange,
+    ManagedPluginChanges,
     ManagedPluginResult,
     MigrationPlan,
     PendingOperation,
@@ -198,6 +200,7 @@ class ModernizerService:
             recovery_data={},
             original_run_id=run_id,
             managed_plugins=managed_plugins,
+            configuration_snapshot=self._configuration_snapshot(),
             managed_plugin_results=(
                 [
                     ManagedPluginResult(
@@ -248,6 +251,7 @@ class ModernizerService:
             self._state.preflight()
         old = self._state.load_manifest(installation_id, run_id)
         original_steps = self._safe_resume_plan(old)
+        self._assert_resume_configuration_consistent(old)
         path = self._installation(installation_id).destination_path
         self._runner.assert_resume_consistent(old, path)
         completed_count = self._completed_prefix(old, original_steps)
@@ -257,6 +261,26 @@ class ModernizerService:
         # must never turn a later resume into an implicit restoration attempt.
         parameters["restore_widgets"] = restore_widgets
         managed_refresh_remaining = any(step.name == "managed_plugin_refresh" for step in remaining)
+        reconcile_managed_plugins = (
+            old.failed_step == "managed_plugin_refresh"
+            and bool(remaining)
+            and remaining[0].name == "managed_plugin_refresh"
+        )
+        managed_plugin_changes: ManagedPluginChanges | None
+        if reconcile_managed_plugins:
+            original_run_id = old.original_run_id or old.run_id
+            original = (
+                old
+                if original_run_id == old.run_id
+                else self._state.load_manifest(installation_id, original_run_id)
+            )
+            managed_plugins = self._configured_managed_plugins()
+            managed_plugin_changes = self._managed_plugin_changes(
+                original.managed_plugins, managed_plugins
+            )
+        else:
+            managed_plugins = list(old.managed_plugins)
+            managed_plugin_changes = old.managed_plugin_changes
         new = RunManifest(
             self._ids.new(),
             installation_id,
@@ -276,7 +300,7 @@ class ModernizerService:
             original_run_id=old.original_run_id or old.run_id,
             resumed_from_run_id=old.run_id,
             resume_source_failed_step=old.failed_step,
-            managed_plugins=list(old.managed_plugins),
+            managed_plugins=managed_plugins,
             managed_plugin_results=(
                 [
                     ManagedPluginResult(
@@ -289,11 +313,13 @@ class ModernizerService:
                         False,
                         "dry-run: substituição planejada, sem alteração",
                     )
-                    for plugin in old.managed_plugins
+                    for plugin in managed_plugins
                 ]
                 if dry_run and managed_refresh_remaining
-                else list(old.managed_plugin_results)
+                else ([] if reconcile_managed_plugins else list(old.managed_plugin_results))
             ),
+            managed_plugin_changes=managed_plugin_changes,
+            configuration_snapshot=old.configuration_snapshot,
         )
         return self._runner.run(
             new,
@@ -317,6 +343,54 @@ class ModernizerService:
                 dry_run=dry_run,
             ),
         )
+
+    def _configured_managed_plugins(self) -> list[ManagedPlugin]:
+        return [
+            ManagedPlugin(
+                plugin.slug,
+                plugin.repository,
+                plugin.branch,
+                plugin.strategy,
+                plugin.dirty_policy,
+            )
+            for plugin in self.config.managed_plugins
+        ]
+
+    @staticmethod
+    def _managed_plugin_changes(
+        original: list[ManagedPlugin], current: list[ManagedPlugin]
+    ) -> ManagedPluginChanges:
+        original_by_slug = {plugin.slug: plugin for plugin in original}
+        current_by_slug = {plugin.slug: plugin for plugin in current}
+        return ManagedPluginChanges(
+            added=tuple(plugin for plugin in current if plugin.slug not in original_by_slug),
+            removed=tuple(plugin for plugin in original if plugin.slug not in current_by_slug),
+            changed=tuple(
+                ManagedPluginChange(original_by_slug[plugin.slug], plugin)
+                for plugin in current
+                if plugin.slug in original_by_slug and plugin != original_by_slug[plugin.slug]
+            ),
+        )
+
+    def _configuration_snapshot(self) -> Dict[str, object]:
+        return cast(
+            Dict[str, object],
+            self.config.model_dump(
+                mode="json",
+                exclude={"managed_plugins", "observability", "state_directory"},
+            ),
+        )
+
+    def _assert_resume_configuration_consistent(self, old: RunManifest) -> None:
+        if old.configuration_snapshot is None:
+            raise ResumeConsistencyError(
+                "Este manifest não contém a configuração crítica do run original; "
+                "resume seguro recusado"
+            )
+        if old.configuration_snapshot != self._configuration_snapshot():
+            raise ResumeConsistencyError(
+                "A configuração crítica diverge do run original; resume seguro recusado"
+            )
 
     @staticmethod
     def _safe_resume_plan(old: RunManifest) -> list[PlannedStep]:
