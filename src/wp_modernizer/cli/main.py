@@ -29,6 +29,7 @@ from wp_modernizer.infrastructure.ssh import (
 )
 from wp_modernizer.infrastructure.state import JsonStateStore
 from wp_modernizer.infrastructure.time import SystemClock, UUIDGenerator
+from wp_modernizer.infrastructure.wp_config_writer import WordPressConfigWriter
 from wp_modernizer.infrastructure.wpcli.adapter import WPCLIAdapter
 
 
@@ -53,6 +54,7 @@ def build_service(
     ssh = FileTransferRouter(config.servers, key_transport, password_transport)
     mysql = MySQLAdapter(config.databases, secret_provider, command_runner)
     wpcli = WPCLIAdapter(command_runner)
+    config_writer = WordPressConfigWriter()
     database_endpoints = {
         installation.destination_path: tuple(
             endpoint_id
@@ -70,6 +72,7 @@ def build_service(
         managed_plugins=ManagedPluginRefresher(filesystem, command_runner),
         source_inspection=ssh,
         filesystem=filesystem,
+        config_writer=config_writer,
         organizational_domain=config.organizational_domain,
     )
     return ModernizerService(

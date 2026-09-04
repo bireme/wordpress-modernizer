@@ -28,6 +28,7 @@ from wp_modernizer.domain.errors import (
     RemoteHostUnreachableError,
     TransferError,
     UnsafeOperationError,
+    WordPressUnavailableError,
 )
 from wp_modernizer.domain.models import PendingOperation, PlannedStep
 from wp_modernizer.domain.widgets import WidgetOption, WidgetSnapshot
@@ -38,6 +39,7 @@ from wp_modernizer.infrastructure.secrets import EnvironmentSecretProvider
 from wp_modernizer.infrastructure.ssh.adapter import RSyncSSHAdapter
 from wp_modernizer.infrastructure.ssh.password_adapter import PasswordSFTPAdapter
 from wp_modernizer.infrastructure.ssh.router import FileTransferRouter
+from wp_modernizer.infrastructure.wp_config_writer import WordPressConfigWriter
 from wp_modernizer.infrastructure.wpcli.adapter import WPCLIAdapter
 
 
@@ -452,12 +454,70 @@ def test_runtime_search_replace_derives_test_url_from_discovered_site_url() -> N
     )
 
 
-def test_wpcli_writes_config_values_via_stdin_not_argv() -> None:
-    runner = FakeCommandRunner()
-    WPCLIAdapter(runner).set_config(Path("/site"), {"DB_PASSWORD": "never-in-argv"}, "run-1")
-    assert "--prompt=value" in runner.calls[0]
-    assert "DB_PASSWORD" in runner.calls[0]
-    assert "never-in-argv" not in runner.calls[0]
+def test_wp_config_writer_updates_database_constants(tmp_path: Path) -> None:
+    config = tmp_path / "wp-config.php"
+    config.write_text(
+        "\n".join(
+            [
+                "define('DB_HOST', 'old-host');",
+                "define('DB_NAME', 'old-db');",
+                "define('DB_USER', 'old-user');",
+                "define('DB_PASSWORD', 'old-password');",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    WordPressConfigWriter().set_config(
+        tmp_path,
+        {
+            "DB_HOST": "basalto21.bireme.br",
+            "DB_NAME": "wp_decsfinder_tst",
+            "DB_USER": "wordpress",
+            "DB_PASSWORD": "secret-value",
+        },
+        "run-1",
+    )
+
+    updated = config.read_text(encoding="utf-8")
+
+    assert "define('DB_HOST', 'basalto21.bireme.br');" in updated
+    assert "define('DB_NAME', 'wp_decsfinder_tst');" in updated
+    assert "define('DB_USER', 'wordpress');" in updated
+    assert "define('DB_PASSWORD', 'secret-value');" in updated
+
+
+def test_wp_config_writer_rejects_ambiguous_definition(tmp_path: Path) -> None:
+    config = tmp_path / "wp-config.php"
+    config.write_text(
+        "\n".join(
+            [
+                "define('DB_HOST', 'one');",
+                "define('DB_HOST', 'two');",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(WordPressUnavailableError):
+        WordPressConfigWriter().set_config(
+            tmp_path,
+            {"DB_HOST": "basalto21.bireme.br"},
+            "run-1",
+        )
+
+
+def test_wp_config_writer_rejects_unauthorized_constant(tmp_path: Path) -> None:
+    config = tmp_path / "wp-config.php"
+    config.write_text("define('WP_DEBUG', false);\n", encoding="utf-8")
+
+    with pytest.raises(WordPressUnavailableError):
+        WordPressConfigWriter().set_config(
+            tmp_path,
+            {"WP_DEBUG": "true"},
+            "run-1",
+        )
 
 
 def test_key_ssh_adapter_continues_to_use_rsync_without_credentials_in_argv() -> None:
