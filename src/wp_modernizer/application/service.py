@@ -39,6 +39,7 @@ from wp_modernizer.domain.models import (
 )
 from wp_modernizer.domain.path_parser import InstallationPathParser
 from wp_modernizer.domain.planning import MigrationPlanner
+from wp_modernizer.pipeline.progress import ProgressReporter
 from wp_modernizer.pipeline.runner import PipelineRunner
 from wp_modernizer.pipeline.steps import OperationStep, planned_update_steps
 
@@ -150,6 +151,7 @@ class ModernizerService:
         dry_run: bool,
         replace_existing: bool = False,
         restore_widgets: bool = False,
+        reporter: ProgressReporter | None = None,
     ) -> RunManifest:
         if not dry_run:
             # Fail-and-preserve só é seguro quando o manifesto pode ser persistido antes
@@ -237,6 +239,7 @@ class ModernizerService:
             steps,
             context,
             required_capabilities(config=self.config, steps=planned_steps, dry_run=dry_run),
+            reporter,
         )
 
     def resume(
@@ -246,6 +249,7 @@ class ModernizerService:
         dry_run: bool,
         *,
         restore_widgets: bool = False,
+        reporter: ProgressReporter | None = None,
     ) -> RunManifest:
         if not dry_run:
             self._state.preflight()
@@ -342,6 +346,7 @@ class ModernizerService:
                 steps=remaining,
                 dry_run=dry_run,
             ),
+            reporter,
         )
 
     def _configured_managed_plugins(self) -> list[ManagedPlugin]:
