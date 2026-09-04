@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from contextlib import nullcontext
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable
@@ -31,6 +32,20 @@ from wp_modernizer.infrastructure.state import JsonStateStore
 from wp_modernizer.infrastructure.time import SystemClock, UUIDGenerator
 from wp_modernizer.infrastructure.wp_config_writer import WordPressConfigWriter
 from wp_modernizer.infrastructure.wpcli.adapter import WPCLIAdapter
+from wp_modernizer.observability.logging import (
+    ObservedCommandRunner,
+    StructuredProgressReporter,
+    active_execution_logger,
+    create_execution_log,
+)
+from wp_modernizer.pipeline.progress import NullProgressReporter
+
+from .output import (
+    CompositeProgressReporter,
+    TerminalProgressReporter,
+    emit_diagnosis,
+    emit_run_summary,
+)
 
 
 def build_service(
@@ -42,7 +57,7 @@ def build_service(
     executable_locator: ExecutableLocator | None = None,
 ) -> ModernizerService:
     """Composition root da aplicação; dependências opcionais mantêm os testes sem subprocessos."""
-    command_runner = runner or SubprocessCommandRunner()
+    command_runner = ObservedCommandRunner(runner or SubprocessCommandRunner())
     secret_provider = secrets or EnvironmentSecretProvider()
     filesystem = LocalFileSystem()
     key_transport = RSyncSSHAdapter(config.servers, secret_provider, command_runner)
@@ -97,6 +112,7 @@ class Context:
     def __init__(self, config_path: Path, dry_run: bool) -> None:
         config = load_config(config_path)
         self.service = build_service(config)
+        self.config = config
         self.dry_run = dry_run
 
 
@@ -170,7 +186,35 @@ def _read_command(operation: Operation) -> Any:
 
 cli.add_command(_read_command(Operation.INVENTORY))
 cli.add_command(_read_command(Operation.PLAN))
-cli.add_command(_read_command(Operation.DIAGNOSE))
+
+
+@cli.command()
+@click.argument("installation_id")
+@click.option("--json", "as_json", is_flag=True, help="Emite JSON legível por máquina.")
+@click.pass_obj
+def diagnose(context: Context, installation_id: str, as_json: bool) -> None:
+    """Verifica as capacidades disponíveis para uma instalação."""
+    execution_log = create_execution_log(
+        context.config.state_directory, Operation.DIAGNOSE.value, installation_id
+    )
+    try:
+        with active_execution_logger(execution_log.structured):
+            execution_log.structured.event(
+                "run_started", installation=installation_id, operation="diagnose"
+            )
+            report = context.service.diagnose(installation_id)
+            for capability in report["capabilities"]:
+                execution_log.structured.event("capability_result", **capability)
+            execution_log.structured.event("run_finished", report=report)
+        if as_json:
+            _emit({**report, "log_path": str(execution_log.path)}, True)
+        else:
+            emit_diagnosis(report, str(execution_log.path))
+    except ModernizerError as exc:
+        execution_log.structured.event("run_failed", reason=str(exc))
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        execution_log.close()
 
 
 def _mutable_command(operation: Operation) -> Any:
@@ -202,19 +246,60 @@ def _mutable_command(operation: Operation) -> Any:
         restore_widgets: bool,
         as_json: bool,
     ) -> None:
+        execution_log = None
         try:
-            report = context.service.execute(
-                operation,
-                installation_id,
-                dry_run=context.dry_run or command_dry_run,
-                replace_existing=replace_existing,
-                restore_widgets=restore_widgets,
+            try:
+                execution_log = create_execution_log(
+                    context.config.state_directory, operation.value, installation_id
+                )
+            except OSError:
+                execution_log = None
+            structured = (
+                StructuredProgressReporter(execution_log.structured)
+                if execution_log is not None
+                else NullProgressReporter()
             )
-            _emit(report, as_json)
+            reporter = (
+                structured
+                if as_json
+                else CompositeProgressReporter(
+                    (TerminalProgressReporter(operation.value), structured)
+                )
+            )
+            logging_context = (
+                active_execution_logger(execution_log.structured)
+                if execution_log is not None
+                else nullcontext()
+            )
+            with logging_context:
+                report = context.service.execute(
+                    operation,
+                    installation_id,
+                    dry_run=context.dry_run or command_dry_run,
+                    replace_existing=replace_existing,
+                    restore_widgets=restore_widgets,
+                    reporter=reporter,
+                )
+            if as_json:
+                payload = _serialize(report)
+                if execution_log is not None:
+                    payload["log_path"] = str(execution_log.path)
+                click.echo(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                log_path = str(execution_log.path) if execution_log else "unavailable"
+                emit_run_summary(report, log_path, operation.value)
             if report.status is RunStatus.UPDATE_FAILED_PRESERVED:
                 raise click.exceptions.Exit(2)
         except ModernizerError as exc:
-            raise click.ClickException(str(exc)) from exc
+            if execution_log is not None:
+                execution_log.structured.event("run_failed", reason=str(exc))
+            detail = str(exc)
+            if not as_json and execution_log is not None:
+                detail += f"\nSee complete log:\n  {execution_log.path}"
+            raise click.ClickException(detail) from exc
+        finally:
+            if execution_log is not None:
+                execution_log.close()
 
     return command
 
@@ -243,18 +328,38 @@ def resume(
     as_json: bool,
 ) -> None:
     """Continua uma execução preservada após verificar o estado da intervenção manual."""
+    execution_log = create_execution_log(
+        context.config.state_directory, Operation.RESUME.value, installation_id, run_id=run_id
+    )
     try:
-        _emit(
-            context.service.resume(
+        structured = StructuredProgressReporter(execution_log.structured)
+        reporter = (
+            structured
+            if as_json
+            else CompositeProgressReporter((TerminalProgressReporter("resume"), structured))
+        )
+        with active_execution_logger(execution_log.structured):
+            report = context.service.resume(
                 installation_id,
                 run_id,
                 context.dry_run or command_dry_run,
                 restore_widgets=restore_widgets,
-            ),
-            as_json,
-        )
+                reporter=reporter,
+            )
+        if as_json:
+            payload = _serialize(report)
+            payload["log_path"] = str(execution_log.path)
+            click.echo(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            emit_run_summary(report, str(execution_log.path), "resume")
     except ModernizerError as exc:
-        raise click.ClickException(str(exc)) from exc
+        execution_log.structured.event("run_failed", reason=str(exc))
+        detail = str(exc)
+        if not as_json:
+            detail += f"\nSee complete log:\n  {execution_log.path}"
+        raise click.ClickException(detail) from exc
+    finally:
+        execution_log.close()
 
 
 def main() -> int:
