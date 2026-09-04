@@ -145,7 +145,7 @@ def _serialize(value: Any) -> Any:
         return str(value)
     if isinstance(value, dict):
         return {key: _serialize(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, (list, tuple, set, frozenset)):
         return [_serialize(item) for item in value]
     return value
 
