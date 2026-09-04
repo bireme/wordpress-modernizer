@@ -1,9 +1,25 @@
 # Configuração
 
-Copie `config.example.yaml` para um arquivo local ignorado pelo Git. O YAML contém a topologia e
-as referências; as variáveis de ambiente contêm os valores. `EnvironmentSecretProvider` gera um
-erro operacional quando falta uma referência. Um futuro adaptador de cofre precisa apenas
-implementar `SecretProvider`.
+Copie `config.example.yaml` para um arquivo local ignorado pelo Git. Esse `config.yaml` contém a
+topologia e as referências específicas do servidor/ambiente; as variáveis de ambiente contêm os
+valores secretos. `EnvironmentSecretProvider` gera um erro operacional quando falta uma
+referência. Um futuro adaptador de cofre precisa apenas implementar `SecretProvider`.
+
+## Plugins gerenciados
+
+A lista pública, padronizada e compartilhada de plugins gerenciados fica separadamente em
+`plugins.yaml`. Esse arquivo é versionado junto com a aplicação e é a única fonte da lista. A
+aplicação sempre o carrega de sua localização fixa na distribuição; não existe opção de YAML,
+variável de ambiente ou argumento de linha de comando para escolher outro caminho. Assim, basta
+continuar passando somente a configuração local do servidor:
+
+```bash
+wp-modernizer --config config.yaml inventory example-site
+```
+
+Cada item de `managed_plugins` em `plugins.yaml` é validado antes da execução, inclusive slug,
+repositório, branch, estratégia e política para alterações locais. Ausência, falha de leitura,
+YAML malformado ou estrutura inválida interrompem o carregamento com um erro de configuração.
 
 Cada instalação informa um servidor de origem, um ambiente de origem (`production` ou `test`),
 um caminho absoluto de origem, um destino de TESTE absoluto e IDs permitidos de endpoints de

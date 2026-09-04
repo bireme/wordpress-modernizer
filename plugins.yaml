@@ -1,0 +1,90 @@
+managed_plugins:
+  - slug: lis
+    repository: https://github.com/bireme/lis-wp-plugin.git
+    branch: master
+    strategy: replace_from_git
+    dirty_policy: abort
+
+  - slug: direve
+    repository: https://github.com/bireme/direve-wp-plugin.git
+    branch: master
+    strategy: replace_from_git
+    dirty_policy: abort
+
+  - slug: portalrev
+    repository: https://github.com/bireme/portalrev-wp-plugin.git
+    branch: main
+    strategy: replace_from_git
+    dirty_policy: abort
+
+  - slug: fichas-idb
+    repository: https://github.com/bireme/fichas-idb-wp-plugin.git
+    branch: main
+    strategy: replace_from_git
+    dirty_policy: abort
+
+  - slug: leisref
+    repository: https://github.com/bireme/leisref-wp-plugin.git
+    branch: master
+    strategy: replace_from_git
+    dirty_policy: abort
+
+  - slug: e-blueinfo
+    repository: https://github.com/bireme/e-blueinfo-wp-plugin.git
+    branch: master
+    strategy: replace_from_git
+    dirty_policy: abort
+
+  - slug: centers
+    repository: https://github.com/bireme/centers-wp-plugin.git
+    branch: master
+    strategy: replace_from_git
+    dirty_policy: abort
+
+  - slug: best-practices
+    repository: https://github.com/bireme/best-practices-wp-plugin.git
+    branch: main
+    strategy: replace_from_git
+    dirty_policy: abort
+
+  - slug: thesaurus
+    repository: https://github.com/bireme/thesaurus-wp-plugin.git
+    branch: master
+    strategy: replace_from_git
+    dirty_policy: abort
+
+  - slug: bvs-site
+    repository: https://github.com/bireme/bvs-site-wp-plugin.git
+    branch: master
+    strategy: replace_from_git
+    dirty_policy: abort
+
+  - slug: relatos
+    repository: https://github.com/bireme/relatos-wp-plugin.git
+    branch: main
+    strategy: replace_from_git
+    dirty_policy: abort
+
+  - slug: fi-multimedia
+    repository: https://github.com/bireme/fi-multimedia-wp-plugin.git
+    branch: master
+    strategy: replace_from_git
+    dirty_policy: abort
+
+  - slug: impact-measurement
+    repository: https://github.com/bireme/impact-measurement-wp-plugin.git
+    branch: master
+    strategy: replace_from_git
+    dirty_policy: abort
+
+  - slug: oer
+    repository: https://github.com/bireme/oer-wp-plugin.git
+    branch: master
+    strategy: replace_from_git
+    dirty_policy: abort
+
+  - slug: accessibility
+    repository: https://github.com/bireme/accessibility-wp-plugin.git
+    branch: main
+    strategy: replace_from_git
+    dirty_policy: abort
