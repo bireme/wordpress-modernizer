@@ -32,6 +32,11 @@ ruff check . && ruff format --check .
 mypy src
 ```
 
+`config.yaml` é local, específico do servidor e pode conter referências sensíveis, por isso não é
+versionado. A lista pública e compartilhada de plugins gerenciados fica no `plugins.yaml` que já
+acompanha a aplicação e é versionado no repositório. Seu caminho é fixo e não precisa — nem pode —
+ser informado pelo usuário, portanto o fluxo acima não exige nenhum passo adicional.
+
 Os comandos que alteram estado são `migrate`, `update`, `pipeline` e `resume`. Primeiro,
 `migrate --replace-existing` cria uma cópia de segurança da cópia de teste existente; em seguida,
 exige que todas as proteções de caminhos destrutivos sejam aprovadas. `diagnose`, `inventory` e
