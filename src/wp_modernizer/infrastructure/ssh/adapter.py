@@ -58,6 +58,7 @@ class RSyncSSHAdapter:
             argv = [
                 "rsync",
                 "-a",
+                "--chmod=Du+w,Dg+w,Fu+w,Fg+w",
                 "--info=stats2",
                 "--protect-args",
                 "-e",
