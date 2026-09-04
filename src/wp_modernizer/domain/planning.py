@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Iterable, Tuple
 
-from .enums import Capability, Environment, PendingOperationType, StepCapability
+from .enums import Capability, Environment, HealthStatus, PendingOperationType, StepCapability
 from .models import MigrationPlan, PendingOperation, PlannedStep, WordPressInstallation
 
 
@@ -50,6 +50,12 @@ class MigrationPlanner:
                     installation_id=node.installation_id,
                     excludes=(*descendants, Path("*.sql"), Path(".wp-modernizer")),
                     capability=StepCapability.MUTABLE_WITHOUT_SAFE_DRY_RUN,
+                    allowed_health_regressions=frozenset(
+                        {
+                            HealthStatus.DATABASE_UNAVAILABLE,
+                            HealthStatus.WPCLI_PARTIAL,
+                        }
+                    ),
                 )
             )
             for name in ("snapshot_source_database", "copy_database", "write_test_db_config"):
