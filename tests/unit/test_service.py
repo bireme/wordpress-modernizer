@@ -284,6 +284,82 @@ def test_resume_does_not_reuse_previous_widget_restore_authorization() -> None:
     assert operations.contexts[0]["restore_widgets"] is False
 
 
+def test_resume_from_managed_plugin_refresh_reconciles_current_plugins() -> None:
+    state = FakeStateStore()
+    operations = FakeOperations(fail_at="managed_plugin_refresh")
+    app = service(operations=operations, state=state)
+    app.config.managed_plugins = [
+        ManagedPluginConfig(
+            slug="polylang",
+            repository="https://example.invalid/polylang.git",
+            branch="main",
+            dirty_policy="abort",
+        ),
+        ManagedPluginConfig(
+            slug="kept",
+            repository="https://example.invalid/kept.git",
+            branch="main",
+            dirty_policy="abort",
+        ),
+    ]
+    original = app.execute(Operation.UPDATE, "parent", dry_run=False)
+    assert original.failed_step == "managed_plugin_refresh"
+
+    app.config.managed_plugins = [
+        ManagedPluginConfig(
+            slug="kept",
+            repository="https://example.invalid/kept.git",
+            branch="stable",
+            dirty_policy="skip",
+        ),
+        ManagedPluginConfig(
+            slug="added",
+            repository="https://example.invalid/added.git",
+            branch="main",
+            dirty_policy="abort",
+        ),
+    ]
+    operations.calls.clear()
+    operations.contexts.clear()
+    operations.fail_at = None
+
+    resumed = app.resume("parent", original.run_id, dry_run=False)
+
+    assert resumed.status is RunStatus.SUCCEEDED
+    assert [plugin.slug for plugin in resumed.managed_plugins] == ["kept", "added"]
+    assert operations.calls[:2] == ["managed_plugin_refresh", "third_party_plugin_update"]
+    assert resumed.managed_plugin_changes is not None
+    assert [plugin.slug for plugin in resumed.managed_plugin_changes.removed] == ["polylang"]
+    assert [plugin.slug for plugin in resumed.managed_plugin_changes.added] == ["added"]
+    assert [change.before.slug for change in resumed.managed_plugin_changes.changed] == ["kept"]
+    assert resumed.managed_plugin_changes.changed[0].before.branch == "main"
+    assert resumed.managed_plugin_changes.changed[0].after.branch == "stable"
+
+
+def test_resume_rejects_other_critical_configuration_changes() -> None:
+    state = FakeStateStore()
+    operations = FakeOperations(fail_at="managed_plugin_refresh")
+    app = service(operations=operations, state=state)
+    app.config.managed_plugins = [
+        ManagedPluginConfig(
+            slug="polylang",
+            repository="https://example.invalid/polylang.git",
+        )
+    ]
+    original = app.execute(Operation.UPDATE, "parent", dry_run=False)
+    original_plan = list(original.planned_steps)
+    original_parameters = dict(original.execution_parameters or {})
+    app.config.managed_plugins = []
+    app.config.installations["parent"].database_override = "different_database"
+
+    with pytest.raises(ResumeConsistencyError, match="configuração crítica diverge"):
+        app.resume("parent", original.run_id, dry_run=False)
+
+    assert original.planned_steps == original_plan
+    assert original.execution_parameters == original_parameters
+    assert operations.calls[-1] == "managed_plugin_refresh"
+
+
 def test_resume_after_copy_files_does_not_copy_files_again() -> None:
     state = FakeStateStore()
     operations = FakeOperations(fail_at="snapshot_source_database")
