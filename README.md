@@ -37,6 +37,17 @@ versionado. A lista pública e compartilhada de plugins gerenciados fica no `plu
 acompanha a aplicação e é versionado no repositório. Seu caminho é fixo e não precisa — nem pode —
 ser informado pelo usuário, portanto o fluxo acima não exige nenhum passo adicional.
 
+O domínio é inferido individualmente de `source_path`, relativamente à raiz de
+`allowed_app_roots`: `/home/apps/example.org/wp-example/htdocs` sob `/home/apps` identifica
+`example.org`. Instalações diferentes podem pertencer a domínios diferentes. `destination_path`
+é opcional: omitido, usa o mesmo caminho de `source_path` no servidor operacional de TESTE.
+Um caminho explícito continua permitido como exceção.
+
+Cadastre em `databases:` somente endpoints de TESTE. Banco, host, usuário, senha e prefixo da
+origem são descobertos por parsing literal de `wp-config.php` remoto, sem executar PHP ou WP-CLI
+em PRODUÇÃO. Sem porta explícita, tenta 6612 e depois 3306 apenas por falha de conectividade.
+Credenciais da origem permanecem efêmeras e fora do estado e dos logs.
+
 Os comandos que alteram estado são `migrate`, `update`, `pipeline` e `resume`. Primeiro,
 `migrate --replace-existing` cria uma cópia de segurança da cópia de teste existente; em seguida,
 exige que todas as proteções de caminhos destrutivos sejam aprovadas. `diagnose`, `inventory` e

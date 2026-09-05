@@ -32,10 +32,10 @@ capacidades e grava seu manifesto externo de auditoria. Intencionalmente, não e
 publicação em produção.
 
 No fluxo de migração, `snapshot_source_database` é `READ_ONLY`: lê `wp-config.php` remotamente
-para obter `DB_NAME`, `DB_HOST` e `$table_prefix`, e consulta `siteurl` no MySQL da origem com
+para obter `DB_NAME`, `DB_HOST`, `DB_USER`, `DB_PASSWORD` e `$table_prefix`, e consulta `siteurl` no MySQL da origem com
 `SELECT`. Não executa WP-CLI ou PHP remoto. Assim, `pipeline --dry-run` resolve e registra
 `source_server`, `source_path`,
-`source_database`, `source_database_endpoint`, `target_database_endpoint`, `target_database`, URL
+`source_database`, `source_database_host`, `source_database_port`, `target_database_endpoint`, `target_database`, URL
 de origem e `test_url` sem depender de `backup_existing_test` ou `copy_files`. Dump, importação,
 backup e cópia de arquivos continuam apenas `PLANNED`. O dry-run valida acesso e resolução, mas
 não prova espaço livre para o backup, conclusão de uma cópia grande ou sucesso futuro do dump e
@@ -45,10 +45,23 @@ O adaptador público de execução delega cópias à porta de transporte remoto.
 SSH/rsync para autenticação por chave e SSH/SFTP (Paramiko) para autenticação por senha. A
 inspeção da origem reutiliza esses transportes apenas para leitura do arquivo permitido; descoberta
 e transferência de bancos são delegadas ao MySQL e operações WordPress locais/de TESTE ao WP-CLI. Uma
-migração de banco exige um endpoint de origem cadastrado (explícito ou descoberto de forma exata)
-e endpoints de TESTE autorizados, com resolução não ambígua em ambos os lados. Credenciais do
-banco de destino são entregues ao WP-CLI local por entrada padrão, e não por `argv`; credenciais
-do `wp-config.php` remoto nunca são extraídas.
+migração de banco descobre a conexão de origem pelo arquivo remoto e usa apenas endpoints de
+TESTE cadastrados para o destino. Credenciais do banco de destino são entregues ao WP-CLI local
+por entrada padrão, e não por `argv`.
+
+Sem porta explícita em `DB_HOST`, a conexão tenta 6612 e somente em caso de
+`ENDPOINT_UNAVAILABLE` tenta 3306. `AVAILABLE` encerra a descoberta com sucesso.
+`AUTHENTICATION_DENIED`, `SCHEMA_NOT_FOUND`, `CONFIGURATION_INSUFFICIENT` e `UNKNOWN`
+interrompem sem fallback: trocar de serviço ocultaria uma falha que precisa ser corrigida.
+Uma porta explícita válida (1–65535) é a única tentada. Falhas são sanitizadas; sockets e formatos
+ambíguos são recusados.
+
+A conexão de PRODUÇÃO é efêmera: `DB_USER` e `DB_PASSWORD` não entram em logs, exceções,
+`repr()`, manifestos, state ou recovery data, nem em argumentos de subprocessos. O cliente MySQL
+recebe as credenciais em `--defaults-extra-file` temporário com permissão `0600`, removido em
+sucesso e erro. O estado guarda apenas metadados não secretos. Antes de retomar a cópia do banco,
+`resume` relê o `wp-config.php`, redescobre a conexão e exige banco, host e porta iguais ao snapshot;
+usuário e senha podem mudar e não são comparados nem persistidos no estado.
 
 Com destino existente, a execução sem `--replace-existing` é recusada. Com a opção, o step
 `backup_existing_test` valida novamente ambiente, estrutura, raiz permitida e ausência de symlink;

@@ -18,7 +18,7 @@ from wp_modernizer.domain.errors import (
     InfrastructureError,
     UnsafeOperationError,
 )
-from wp_modernizer.domain.models import DatabaseProbeResult
+from wp_modernizer.domain.models import DatabaseProbeResult, SourceDatabaseConnection
 from wp_modernizer.domain.widgets import WidgetOption, WidgetSnapshot
 
 
@@ -98,6 +98,58 @@ class MySQLAdapter:
                     "--quick",
                     "--default-character-set=utf8mb4",
                     database,
+                ],
+                stdout_path=output,
+                timeout=1800,
+                correlation_id=run_id,
+            )
+        self._ensure_success(result.return_code, result.stderr)
+
+    def probe_source(self, connection: SourceDatabaseConnection) -> DatabaseProbeResult:
+        """Verify a discovered production connection without consulting configured endpoints."""
+        try:
+            result = self._run_source_query(connection, "SELECT 1")
+        except (ConfigurationError, FileNotFoundError):
+            return self._probe_result(DatabaseAvailabilityStatus.CONFIGURATION_INSUFFICIENT)
+        except (CommandTimeoutError, TimeoutError):
+            return self._probe_result(DatabaseAvailabilityStatus.ENDPOINT_UNAVAILABLE)
+        except Exception:
+            return self._probe_result(DatabaseAvailabilityStatus.UNKNOWN)
+        if result.return_code == 0:
+            return self._probe_result(DatabaseAvailabilityStatus.AVAILABLE)
+        error = result.stderr.lower()
+        if "access denied" in error or "error 1045" in error:
+            return self._probe_result(DatabaseAvailabilityStatus.AUTHENTICATION_DENIED)
+        if "unknown database" in error or "error 1049" in error:
+            return self._probe_result(DatabaseAvailabilityStatus.SCHEMA_NOT_FOUND)
+        if any(
+            marker in error
+            for marker in (
+                "error 2002",
+                "error 2003",
+                "error 2005",
+                "error 2006",
+                "error 2013",
+                "can't connect",
+                "cannot connect",
+                "connection refused",
+                "lost connection",
+                "unknown mysql server host",
+            )
+        ):
+            return self._probe_result(DatabaseAvailabilityStatus.ENDPOINT_UNAVAILABLE)
+        return self._probe_result(DatabaseAvailabilityStatus.UNKNOWN)
+
+    def dump_source(self, connection: SourceDatabaseConnection, output: Path, run_id: str) -> None:
+        with self._source_command(), self._source_defaults_file(connection) as defaults:
+            result = self._runner.run(
+                [
+                    self._dump,
+                    f"--defaults-extra-file={defaults}",
+                    "--single-transaction",
+                    "--quick",
+                    "--default-character-set=utf8mb4",
+                    connection.database_name,
                 ],
                 stdout_path=output,
                 timeout=1800,
@@ -231,6 +283,25 @@ class MySQLAdapter:
             raise InfrastructureError("siteurl vazia no banco WordPress de origem")
         return value
 
+    def read_source_site_url(self, connection: SourceDatabaseConnection) -> str:
+        table_prefix = connection.table_prefix
+        if len(table_prefix) > 56 or not re.fullmatch(r"[A-Za-z0-9_]+", table_prefix):
+            raise ConfigurationError("O prefixo de tabelas WordPress é inseguro")
+        table = f"{table_prefix}options"
+        sql = f"SELECT option_value FROM `{table}` "  # noqa: S608
+        sql += "WHERE option_name='siteurl' LIMIT 2"
+        result = self._run_source_query(connection, sql)
+        self._ensure_success(result.return_code, result.stderr)
+        values = result.stdout.splitlines()
+        if not values:
+            raise DatabaseNotFoundError("siteurl não foi encontrada no banco WordPress de origem")
+        if len(set(values)) != 1:
+            raise InfrastructureError("siteurl ambígua no banco WordPress de origem")
+        value = values[0].strip()
+        if not value:
+            raise InfrastructureError("siteurl vazia no banco WordPress de origem")
+        return value
+
     def _query(self, endpoint_id: str, sql: str, database: str = "") -> str:
         result = self._run_query(endpoint_id, sql, database)
         self._ensure_success(result.return_code, result.stderr)
@@ -251,6 +322,22 @@ class MySQLAdapter:
             argv.extend(["--execute", sql])
             result = self._runner.run(argv, timeout=60)
         return result
+
+    def _run_source_query(self, connection: SourceDatabaseConnection, sql: str) -> CommandResult:
+        with self._source_command(), self._source_defaults_file(connection) as defaults:
+            return self._runner.run(
+                [
+                    self._mysql,
+                    f"--defaults-extra-file={defaults}",
+                    "--batch",
+                    "--raw",
+                    "--skip-column-names",
+                    connection.database_name,
+                    "--execute",
+                    sql,
+                ],
+                timeout=60,
+            )
 
     def _execute_script(self, endpoint_id: str, database: str, sql: str, run_id: str) -> None:
         endpoint = self.get_database(endpoint_id)
@@ -309,6 +396,35 @@ class MySQLAdapter:
                     f"host={endpoint.host}\nport={endpoint.port}\n"
                     f"user={self._option_value(username)}\n"
                     f"password={self._option_value(password)}\n"
+                )
+            os.chmod(path, 0o600)
+            yield path
+        finally:
+            if path is not None:
+                path.unlink(missing_ok=True)
+
+    @contextmanager
+    def _source_command(self) -> Iterator[None]:
+        try:
+            yield
+        except (CommandTimeoutError, TimeoutError):
+            raise CommandTimeoutError("Tempo esgotado na conexão MySQL de origem") from None
+        except (ConfigurationError, FileNotFoundError):
+            raise ConfigurationError("Configuração MySQL de origem insuficiente") from None
+        except Exception:
+            raise InfrastructureError("Falha no comando MySQL de origem") from None
+
+    @contextmanager
+    def _source_defaults_file(self, connection: SourceDatabaseConnection) -> Iterator[Path]:
+        path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
+                path = Path(handle.name)
+                handle.write(
+                    "[client]\n"
+                    f"host={self._option_value(connection.host)}\nport={connection.port}\n"
+                    f"user={self._option_value(connection.username)}\n"
+                    f"password={self._option_value(connection.password)}\n"
                 )
             os.chmod(path, 0o600)
             yield path

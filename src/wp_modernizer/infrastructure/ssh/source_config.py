@@ -6,7 +6,8 @@ from wp_modernizer.domain.errors import WordPressUnavailableError
 from wp_modernizer.domain.models import SourceDatabaseConfiguration
 
 _DEFINE_PREFIX = re.compile(
-    r"\bdefine\s*\(\s*(?P<quote>['\"])(?P<name>DB_NAME|DB_HOST)(?P=quote)\s*,",
+    r"\bdefine\s*\(\s*(?P<quote>['\"])(?P<name>DB_NAME|DB_HOST|DB_USER|DB_PASSWORD)"
+    r"(?P=quote)\s*,",
     re.IGNORECASE,
 )
 _PREFIX_ASSIGNMENT = re.compile(r"\$table_prefix\s*=", re.IGNORECASE)
@@ -16,18 +17,26 @@ _SAFE_PREFIX = re.compile(r"[A-Za-z0-9_]+")
 
 
 def parse_source_config(content: str) -> SourceDatabaseConfiguration:
-    """Extract the three permitted literals without interpreting PHP."""
+    """Extract required literals without interpreting or executing PHP."""
     sanitized = _strip_php_comments(content)
     database_name = _one_define_literal(sanitized, "DB_NAME")
     database_host = _one_define_literal(sanitized, "DB_HOST")
+    database_user = _one_define_literal(sanitized, "DB_USER")
+    database_password = _one_define_literal(sanitized, "DB_PASSWORD")
     table_prefix = _one_prefix_literal(sanitized)
     if not database_name or any(character in database_name for character in "\r\n\x00"):
         raise WordPressUnavailableError("DB_NAME remoto não contém um literal seguro")
     if not database_host or any(character in database_host for character in "\r\n\x00"):
         raise WordPressUnavailableError("DB_HOST remoto não contém um literal seguro")
+    if not database_user or any(character in database_user for character in "\r\n\x00"):
+        raise WordPressUnavailableError("DB_USER remoto não contém um literal seguro")
+    if any(character in database_password for character in "\r\n\x00"):
+        raise WordPressUnavailableError("DB_PASSWORD remoto não contém um literal seguro")
     if len(table_prefix) > 56 or not _SAFE_PREFIX.fullmatch(table_prefix):
         raise WordPressUnavailableError("table_prefix remoto é ausente ou inseguro")
-    return SourceDatabaseConfiguration(database_name, database_host, table_prefix)
+    return SourceDatabaseConfiguration(
+        database_name, database_host, database_user, database_password, table_prefix
+    )
 
 
 def _one_define_literal(content: str, requested_name: str) -> str:

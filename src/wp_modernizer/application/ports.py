@@ -12,6 +12,7 @@ from wp_modernizer.domain.models import (
     ManagedPluginResult,
     RunManifest,
     SourceDatabaseConfiguration,
+    SourceDatabaseConnection,
     StepResult,
     WordPressInstallation,
 )
@@ -56,9 +57,13 @@ class SourceInspectionPort(ServerRegistry, Protocol):
 
 
 class DatabasePort(DatabaseRegistry, Protocol):
-    def endpoint_ids(self) -> Sequence[str]: ...
-
     def dump(self, endpoint_id: str, database: str, output: Path, run_id: str) -> None: ...
+
+    def probe_source(self, connection: SourceDatabaseConnection) -> DatabaseProbeResult: ...
+
+    def dump_source(
+        self, connection: SourceDatabaseConnection, output: Path, run_id: str
+    ) -> None: ...
 
     def import_dump(self, endpoint_id: str, database: str, source: Path, run_id: str) -> None: ...
 
@@ -71,6 +76,8 @@ class DatabasePort(DatabaseRegistry, Protocol):
     def wordpress_configuration(self, endpoint_id: str, database: str) -> Mapping[str, str]: ...
 
     def read_site_url(self, endpoint_id: str, database: str, table_prefix: str) -> str: ...
+
+    def read_source_site_url(self, connection: SourceDatabaseConnection) -> str: ...
 
 
 class WordPressPort(Protocol):

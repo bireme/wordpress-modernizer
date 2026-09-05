@@ -67,10 +67,10 @@ class ModernizerService:
 
     def diagnose(self, installation_id: str) -> Dict[str, Any]:
         item = self._installation(installation_id)
-        report = self._probe.probe(item.destination_path)
+        report = self._probe.probe(item.effective_destination_path)
         return {
             "installation": installation_id,
-            "path": str(item.destination_path),
+            "path": str(item.effective_destination_path),
             "capabilities": [asdict(result) for result in report.results],
             "health": report.health.value,
             "fatal_errors": report.fatal_errors,
@@ -79,7 +79,9 @@ class ModernizerService:
     def inventory(self, installation_id: str) -> Dict[str, Any]:
         item = self._installation(installation_id)
         report = self.diagnose(installation_id)
-        parsed = self._parser.parse(str(item.destination_path), installation_id, Environment.TEST)
+        parsed = self._parser.parse(
+            str(item.effective_destination_path), installation_id, Environment.TEST
+        )
         unavailable = "indisponível: capacidade ausente"
         report.update(
             {
@@ -116,20 +118,23 @@ class ModernizerService:
         installations = []
         for key, candidate in self.config.installations.items():
             try:
-                parsed = self._parser.parse(str(candidate.destination_path), key, Environment.TEST)
+                parsed = self._parser.parse(
+                    str(candidate.effective_destination_path), key, Environment.TEST
+                )
             except UnsafeOperationError:
                 continue
             if (
-                candidate.destination_path == item.destination_path
-                or item.destination_path in candidate.destination_path.parents
+                candidate.effective_destination_path == item.effective_destination_path
+                or item.effective_destination_path in candidate.effective_destination_path.parents
             ):
                 installations.append(parsed)
+        source = self._parser.parse(str(item.source_path), installation_id, item.source_environment)
         pending = (
             PendingOperation(
                 PendingOperationType.SEARCH_REPLACE,
                 {
                     "test_url": str(item.test_url) if item.test_url is not None else "",
-                    "organizational_domain": self.config.organizational_domain,
+                    "source_domain": source.domain,
                 },
                 "executa somente após uma simulação bem-sucedida com WP-CLI reduzido",
             ),
@@ -138,7 +143,6 @@ class ModernizerService:
             installation_id,
             item.source_environment,
             item.source_server,
-            item.source_database_endpoint or "discovered-from-source-config",
             installations,
             pending,
         )
@@ -158,7 +162,7 @@ class ModernizerService:
             # de qualquer sondagem ou etapa capaz de alterar o destino.
             self._state.preflight()
         item = self._installation(installation_id)
-        path = item.destination_path
+        path = item.effective_destination_path
         migration_plan = self._migration_plan(installation_id)
         update_steps = planned_update_steps(installation_id)
         if operation is Operation.MIGRATE:
@@ -256,7 +260,7 @@ class ModernizerService:
         old = self._state.load_manifest(installation_id, run_id)
         original_steps = self._safe_resume_plan(old)
         self._assert_resume_configuration_consistent(old)
-        path = self._installation(installation_id).destination_path
+        path = self._installation(installation_id).effective_destination_path
         self._runner.assert_resume_consistent(old, path)
         completed_count = self._completed_prefix(old, original_steps)
         remaining = original_steps[completed_count:]
