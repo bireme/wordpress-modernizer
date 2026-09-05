@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from tests.fakes.core import (
@@ -113,6 +115,31 @@ def test_plan_includes_nested_child_and_pending_operation() -> None:
     assert [item["installation_id"] for item in plan["installations"]] == ["parent", "child"]
     assert plan["pending_operations"][0]["operation_type"] == "SEARCH_REPLACE"
     assert plan["steps"][-1]["name"] == "pending_search_replace"
+
+
+def test_two_installations_derive_independent_organizational_domains() -> None:
+    configured = config()
+    configured.installations["child"] = configured.installations["child"].model_copy(
+        update={
+            "source_path": Path("/home/apps/bvsalud.org/wp-main/htdocs/decs"),
+            "destination_path": Path("/home/apps/bvsalud.org/wp-test/htdocs/decs"),
+        }
+    )
+    app = ModernizerService(
+        configured,
+        FakeProbe([health(HealthStatus.HEALTHY)]),
+        FakeStateStore(),
+        FakeFileSystem(),
+        FakeClock(),
+        FakeIds(),
+        FakeOperations(),
+    )
+    assert (
+        app.plan("parent")["pending_operations"][0]["parameters"]["source_domain"] == "example.org"
+    )
+    assert (
+        app.plan("child")["pending_operations"][0]["parameters"]["source_domain"] == "bvsalud.org"
+    )
 
 
 def test_pipeline_does_not_execute_pending_search_replace_twice() -> None:

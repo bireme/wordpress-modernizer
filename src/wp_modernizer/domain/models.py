@@ -64,10 +64,24 @@ class DatabaseProbeResult:
 
 @dataclass(frozen=True)
 class SourceDatabaseConfiguration:
-    """Non-secret values read from a source WordPress configuration file."""
+    """Values read literally from a source WordPress configuration file."""
 
     database_name: str
     database_host: str
+    database_user: str = field(repr=False)
+    database_password: str = field(repr=False)
+    table_prefix: str
+
+
+@dataclass(frozen=True)
+class SourceDatabaseConnection:
+    """Ephemeral production connection; it must never be serialized or logged."""
+
+    host: str
+    port: int
+    database_name: str
+    username: str = field(repr=False)
+    password: str = field(repr=False)
     table_prefix: str
 
 
@@ -125,7 +139,6 @@ class MigrationPlan:
     source_environment: Environment
     destination_environment: Environment
     source_server: str
-    source_database_endpoint: Optional[str]
     installations: Tuple[WordPressInstallation, ...]
     steps: Tuple[PlannedStep, ...]
     pending_operations: Tuple[PendingOperation, ...] = ()

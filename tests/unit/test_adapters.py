@@ -71,6 +71,8 @@ class FakeSFTP:
                 b"<?php\n"
                 b"define('DB_NAME', 'wp_portal_prod');\n"
                 b"define('DB_HOST', 'prod-db:3307');\n"
+                b"define('DB_USER', 'prod-user');\n"
+                b"define('DB_PASSWORD', 'prod-password');\n"
                 b"$table_prefix = 'wp_';\n"
             ),
         }
@@ -431,7 +433,7 @@ def test_runtime_search_replace_derives_test_url_from_discovered_site_url() -> N
     )
     pending = PendingOperation(
         PendingOperationType.SEARCH_REPLACE,
-        {"organizational_domain": "bireme.org", "test_url": ""},
+        {"source_domain": "bireme.org", "test_url": ""},
         "test",
     )
     context = {
@@ -645,6 +647,8 @@ def test_key_ssh_reads_remote_config_without_wpcli_or_credentials_in_argv() -> N
                     "<?php\n"
                     'define("DB_NAME", "wp_portal_prod");\n'
                     "define('DB_HOST', 'prod-db:3307');\n"
+                    "define('DB_USER', 'prod-user');\n"
+                    "define('DB_PASSWORD', 'prod-password');\n"
                     "$table_prefix = 'wp_';\n"
                 )
             )
@@ -690,3 +694,96 @@ def test_local_filesystem_fingerprint_changes_and_remove(tmp_path: Path) -> None
     assert filesystem.fingerprint(root) != first
     filesystem.remove_tree(root)
     assert not root.exists()
+
+
+@pytest.mark.parametrize("operation", ["probe", "dump", "siteurl"])
+@pytest.mark.parametrize("failure", [False, True])
+def test_source_mysql_credentials_are_private_and_temporary(tmp_path, operation, failure) -> None:
+    from wp_modernizer.domain.models import SourceDatabaseConfiguration, SourceDatabaseConnection
+
+    connection = SourceDatabaseConnection(
+        "prod-db", 6612, "wp_prod", "private-user", "private-pass", "wp_"
+    )
+    config = SourceDatabaseConfiguration(
+        "wp_prod", "prod-db", "private-user", "private-pass", "wp_"
+    )
+    assert "private-user" not in repr(connection) + repr(config)
+    assert "private-pass" not in repr(connection) + repr(config)
+    paths = []
+
+    class Runner:
+        def run(self, argv, **kwargs):
+            assert "private-user" not in repr(argv)
+            assert "private-pass" not in repr(argv)
+            defaults = Path(argv[1].split("=", 1)[1])
+            paths.append(defaults)
+            assert stat.S_IMODE(defaults.stat().st_mode) == 0o600
+            assert 'user="private-user"' in defaults.read_text()
+            assert 'password="private-pass"' in defaults.read_text()
+            if failure:
+                raise InfrastructureError("private-user private-pass")
+            return FakeCommandResult(stdout="https://portal.example.org\n")
+
+    adapter = MySQLAdapter({}, Secrets(), Runner())
+    if operation == "probe":
+        result = adapter.probe_source(connection)
+        assert result.status is (
+            DatabaseAvailabilityStatus.UNKNOWN if failure else DatabaseAvailabilityStatus.AVAILABLE
+        )
+        assert "private-user" not in repr(result)
+        assert "private-pass" not in repr(result)
+    else:
+
+        def invoke():
+            if operation == "dump":
+                adapter.dump_source(connection, tmp_path / "dump.sql", "run")
+            else:
+                adapter.read_source_site_url(connection)
+
+        if failure:
+            import traceback
+
+            with pytest.raises(InfrastructureError) as raised:
+                invoke()
+            rendered = "".join(traceback.format_exception(raised.type, raised.value, raised.tb))
+            assert "private-user private-pass" not in str(raised.value)
+            assert "InfrastructureError: private-user private-pass" not in rendered
+        else:
+            invoke()
+    assert paths
+    assert all(not path.exists() for path in paths)
+
+
+@pytest.mark.parametrize(
+    ("stderr", "expected"),
+    [
+        (
+            "ERROR 1045 access denied for private-user",
+            DatabaseAvailabilityStatus.AUTHENTICATION_DENIED,
+        ),
+        ("ERROR 1049 unknown database", DatabaseAvailabilityStatus.SCHEMA_NOT_FOUND),
+        ("ERROR 2002 can't connect", DatabaseAvailabilityStatus.ENDPOINT_UNAVAILABLE),
+        ("ERROR 2003 connection refused", DatabaseAvailabilityStatus.ENDPOINT_UNAVAILABLE),
+        ("ERROR 2005 unknown mysql server host", DatabaseAvailabilityStatus.ENDPOINT_UNAVAILABLE),
+        ("ERROR 2006 server gone away", DatabaseAvailabilityStatus.ENDPOINT_UNAVAILABLE),
+        ("ERROR 2013 lost connection", DatabaseAvailabilityStatus.ENDPOINT_UNAVAILABLE),
+        ("private-user private-pass", DatabaseAvailabilityStatus.UNKNOWN),
+    ],
+)
+def test_source_probe_classifies_errors_without_returning_server_output(stderr, expected):
+    from wp_modernizer.domain.models import SourceDatabaseConnection
+
+    connection = SourceDatabaseConnection("host", 6612, "db", "private-user", "private-pass", "wp_")
+    adapter = MySQLAdapter(
+        {},
+        Secrets(),
+        FakeCommandRunner(
+            [
+                FakeCommandResult(return_code=1, stderr=stderr),
+            ]
+        ),
+    )
+    result = adapter.probe_source(connection)
+    assert result.status is expected
+    assert "private-user" not in repr(result)
+    assert "private-pass" not in repr(result)

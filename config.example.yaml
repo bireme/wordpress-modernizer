@@ -1,60 +1,41 @@
-# Em container, aponte para um volume persistente montado; este estado é necessário para resume.
+# Em container, use um volume persistente para permitir resume.
 state_directory: ./state
-organizational_domain: bireme.org
+
 allowed_app_roots:
   - /home/apps
+
 servers:
-  # PRODUÇÃO não requer WP-CLI/PHP CLI. A conta precisa apenas ler wp-config.php e os arquivos
-  # copiados; host key verification continua obrigatória.
-  source-example:
-    host: source.example.org
+  production-server:
+    host: production.example.org
     port: 22
     environment: production
-    username_secret: PROD_EXAMPLE_USERNAME
+    username_secret: PROD_USERNAME
     authentication: password
-    password_secret: PROD_EXAMPLE_PASSWORD
+    password_secret: PROD_PASSWORD
     host_key_policy: strict
-    # Opcional: arquivo adicional no formato OpenSSH. Sem esta opção, usa ~/.ssh/known_hosts.
-    # known_hosts_file: /etc/wp-modernizer/known_hosts
+
 databases:
-  # Todos os schemas devem ser provisionados previamente pela infraestrutura.
-  # Endpoint somente-leitura usado para descobrir siteurl e fazer dump da origem.
-  # Ele NÃO pertence à allowlist de destino.
-  production-db-example:
-    host: db-production.example.invalid
-    port: 3306
-    environment: production
-    username_secret: PROD_DB_EXAMPLE_USERNAME
-    password_secret: PROD_DB_EXAMPLE_PASSWORD
-  test-db-example:
-    host: db-test.example.invalid
+  # Apenas endpoints controlados de TESTE, com schemas previamente provisionados.
+  test-db:
+    host: test-db.example.org
     port: 3306
     environment: test
-    username_secret: TEST_DB_EXAMPLE_USERNAME
-    password_secret: TEST_DB_EXAMPLE_PASSWORD
+    username_secret: TEST_DB_USERNAME
+    password_secret: TEST_DB_PASSWORD
+
 installations:
   example-site:
-    source_server: source-example
+    source_server: production-server
     source_environment: production
-    source_path: /home/apps/example.org/wp-main/htdocs
-    destination_path: /home/apps/example.org/wp-main-test/htdocs
+    source_path: /home/apps/example.org/wp-example/htdocs
+    # destination_path é um override opcional; omitido, usa source_path no servidor de TESTE.
     destination_environment: test
-    # DB_NAME, DB_HOST e $table_prefix vêm do wp-config.php remoto. Opcional quando DB_HOST
-    # corresponde exatamente a um único endpoint cadastrado.
-    # Recomendado para aliases DNS, sockets ou topologias em que host/porta não sejam únicos.
-    source_database_endpoint: production-db-example
-    # Omitido no caso convencional: https://boletin.bireme.org vira
-    # https://boletin.teste.bireme.org. Para uma exceção, declare explicitamente:
-    # test_url: https://destino-excepcional.example.org
-    # Exclusivamente endpoints de TESTE autorizados como destino destrutivo.
-    allowed_database_endpoints: [test-db-example]
-    # Nomes completos alternativos, comparados de forma exata após o candidato *_tst.
+    allowed_database_endpoints: [test-db]
     database_aliases: []
-    # Exceção com precedência absoluta; o schema deve existir previamente no endpoint de TESTE.
-    # database_override: wp_nome_excepcional
     core_checkpoints: []
-# Compatibilidade com configurações antigas. Prefira database_override dentro da instalação.
+
 database_overrides: {}
+
 observability:
   json_stdout: true
   log_file: null

@@ -22,7 +22,7 @@ repositório, branch, estratégia e política para alterações locais. Ausênci
 YAML malformado ou estrutura inválida interrompem o carregamento com um erro de configuração.
 
 Cada instalação informa um servidor de origem, um ambiente de origem (`production` ou `test`),
-um caminho absoluto de origem, um destino de TESTE absoluto e IDs permitidos de endpoints de
+um caminho absoluto de origem, um destino de TESTE opcional e IDs permitidos de endpoints de
 banco de dados de teste. `allowed_database_endpoints` é validado como uma allowlist exclusivamente
 de destinos TESTE; incluir PRODUÇÃO nesse campo é erro de configuração. Apelidos e substituições
 exatas de bancos são explícitos. Por padrão, o modernizer opera somente sobre schemas previamente
@@ -45,7 +45,7 @@ inferir genericamente a persistência do filesystem.
 ## Bancos de dados
 
 A origem e o destino têm resoluções independentes. A porta de inspeção remota lê somente
-`<source_path>/wp-config.php` por SSH/SFTP e extrai os literais `DB_NAME`, `DB_HOST` e
+`<source_path>/wp-config.php` por SSH/SFTP e extrai os literais `DB_NAME`, `DB_HOST`, `DB_USER`, `DB_PASSWORD` e
 `$table_prefix`, inclusive em `--dry-run`. Ela usa a mesma autenticação e a mesma verificação de
 host key do transporte, sem copiar a árvore para o destino e sem executar WP-CLI, PHP ou o
 bootstrap do WordPress em PRODUÇÃO. O conteúdo integral do arquivo e seus segredos nunca são
@@ -55,24 +55,25 @@ Depois que endpoint e schema da origem são resolvidos, `siteurl` é lida de
 `<table_prefix>options` por um `SELECT` MySQL fixo e limitado. A conta MySQL de PRODUÇÃO deve ser
 somente-leitura. A descoberta não executa escrita no banco da origem.
 
-Se `source_database_endpoint` estiver definido, ele identifica o endpoint cadastrado usado para
-validar o schema e produzir o dump somente-leitura. Seu `environment` deve coincidir com
-`source_environment`. Se estiver omitido, `DB_HOST` remoto deve corresponder exatamente ao
-host/porta de um único endpoint cadastrado no mesmo ambiente e o `DB_NAME` deve existir nele.
-Aliases DNS, sockets MySQL, formatos não suportados, ausência e múltiplas correspondências falham
-sem fallback; nesses casos configure `source_database_endpoint` explicitamente.
+`databases:` aceita apenas endpoints configurados/controlados de TESTE (`DatabaseConfig`).
+Bancos de PRODUÇÃO não precisam e não podem ser cadastrados ali. A descoberta cria uma
+`SourceDatabaseConnection` diretamente dos literais remotos, sem enumerar endpoints cadastrados
+ou consultar endpoints de TESTE para localizar a origem. `allowed_database_endpoints` continua
+exclusivamente uma allowlist destrutiva de TESTE e nunca é ampliada pela descoberta.
 
-```yaml
-installations:
-  example-site:
-    source_database_endpoint: production-db-example
-    allowed_database_endpoints: [test-db-example]
-```
+Sem porta explícita em `DB_HOST`, a conexão tenta 6612 e somente em caso de
+`ENDPOINT_UNAVAILABLE` tenta 3306. `AVAILABLE` encerra a descoberta com sucesso.
+`AUTHENTICATION_DENIED`, `SCHEMA_NOT_FOUND`, `CONFIGURATION_INSUFFICIENT` e `UNKNOWN`
+interrompem sem fallback: trocar de serviço ocultaria uma falha que precisa ser corrigida.
+Uma porta explícita válida (1–65535) é a única tentada. Falhas são sanitizadas; sockets e formatos
+ambíguos são recusados.
 
-As credenciais do endpoint de origem são necessárias para consultas de existência, leitura de
-`siteurl` e `mysqldump`,
-mas nunca autorizam importação: `MySQLAdapter.import_dump` continua recusando qualquer endpoint
-que não seja TESTE.
+A conexão de PRODUÇÃO é efêmera: `DB_USER` e `DB_PASSWORD` não entram em logs, exceções,
+`repr()`, manifestos, state ou recovery data, nem em argumentos de subprocessos. O cliente MySQL
+recebe as credenciais em `--defaults-extra-file` temporário com permissão `0600`, removido em
+sucesso e erro. O estado guarda apenas metadados não secretos. Antes de retomar a cópia do banco,
+`resume` relê o `wp-config.php`, redescobre a conexão e exige banco, host e porta iguais ao snapshot;
+usuário e senha podem mudar e não são comparados nem persistidos no estado.
 
 O nome da origem é sempre descoberto do `DB_NAME` remoto. Quando ele segue exatamente
 `wp_<name>_prod`, o candidato automático é `wp_<name>_tst`. A busca usa igualdade exata e ocorre
@@ -90,9 +91,18 @@ Não existe opção pública nem comando para criação de banco. Configuraçõe
 remover a chave e solicitar o provisionamento do schema de TESTE.
 
 `database_override` e o mapa legado `database_overrides` alteram apenas o nome de destino. Eles
-nunca substituem `DB_NAME`, `DB_HOST` nem `source_database_endpoint` da origem.
+nunca substituem os valores descobertos na origem.
 
-`organizational_domain` declara a fronteira DNS usada pela convenção de URLs de TESTE. Para
+O domínio é inferido individualmente de `source_path`, relativamente à raiz de
+`allowed_app_roots`: `/home/apps/example.org/wp-example/htdocs` sob `/home/apps` identifica
+`example.org`. Instalações diferentes podem pertencer a domínios diferentes. `destination_path`
+é opcional: omitido, usa o mesmo caminho de `source_path` no servidor operacional de TESTE.
+Um caminho explícito continua permitido como exceção.
+
+Na migração de configurações antigas, remova `organizational_domain` e
+`source_database_endpoint`: ambos foram removidos do YAML e são rejeitados.
+
+A convenção de URLs usa o domínio inferido. Para
 `bireme.org`, a URL de produção `https://boletin.bireme.org` resulta em
 `https://boletin.teste.bireme.org`, enquanto `https://bireme.org` resulta em
 `https://teste.bireme.org`. O path da URL é preservado. Uma instalação excepcional pode definir

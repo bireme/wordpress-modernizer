@@ -229,7 +229,7 @@ def test_resume_reuses_persisted_reference_after_preserved_divergence() -> None:
                 "site": {
                     "source_server": "source",
                     "source_environment": "production",
-                    "source_path": "/home/apps/example.org/wp-main/htdocs",
+                    "source_path": "/home/apps/bireme.org/wp-main/htdocs",
                     "destination_path": "/home/apps/example.org/wp-test/htdocs",
                     "destination_environment": "test",
                     "allowed_database_endpoints": ["test-db"],
@@ -293,7 +293,7 @@ def test_resume_restores_preserved_divergence_only_when_explicitly_requested() -
                 "site": {
                     "source_server": "source",
                     "source_environment": "production",
-                    "source_path": "/home/apps/example.org/wp-main/htdocs",
+                    "source_path": "/home/apps/bireme.org/wp-main/htdocs",
                     "destination_path": "/home/apps/example.org/wp-test/htdocs",
                     "destination_environment": "test",
                     "allowed_database_endpoints": ["test-db"],

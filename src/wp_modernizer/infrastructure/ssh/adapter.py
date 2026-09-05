@@ -89,17 +89,27 @@ class RSyncSSHAdapter:
                 "O usuário SSH fornecido pelo segredo contém caracteres inválidos"
             )
         remote_command = shlex.join(["cat", "--", str(config_path)])
-        with self._ssh_config(server, username) as config_path:
-            result = self._runner.run(
-                ["ssh", "-F", str(config_path), "wp-modernizer-source", "--", remote_command],
-                timeout=60,
-                correlation_id=run_id,
-            )
-        if result.return_code != 0:
-            raise WordPressUnavailableError("não foi possível ler wp-config.php na origem remota")
-        if not result.stdout or len(result.stdout.encode("utf-8")) > 1024 * 1024:
-            raise WordPressUnavailableError("wp-config.php remoto está vazio ou excede o limite")
-        return parse_source_config(result.stdout)
+        # Keep raw configuration out of CommandResult/redaction: redacting before parsing
+        # would silently replace the production password. The private directory is 0700.
+        with tempfile.TemporaryDirectory(prefix="wp-modernizer-source-") as directory:
+            output = Path(directory) / "config"
+            output.touch(mode=0o600)
+            with self._ssh_config(server, username) as config_path:
+                result = self._runner.run(
+                    ["ssh", "-F", str(config_path), "wp-modernizer-source", "--", remote_command],
+                    stdout_path=output,
+                    timeout=60,
+                    correlation_id=run_id,
+                )
+            if result.return_code != 0:
+                raise WordPressUnavailableError(
+                    "não foi possível ler wp-config.php na origem remota"
+                )
+            if not output.stat().st_size or output.stat().st_size > 1024 * 1024:
+                raise WordPressUnavailableError(
+                    "wp-config.php remoto está vazio ou excede o limite"
+                )
+            return parse_source_config(output.read_text(encoding="utf-8", errors="replace"))
 
     @contextmanager
     def _ssh_config(self, server: ServerConfig, username: str) -> Iterator[Path]:

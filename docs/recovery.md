@@ -48,3 +48,10 @@ os endpoints, schemas, origem remota e URLs. Para inspecionar uma interrupção:
 Em instalações aninhadas, o backup do pai contém a árvore original inteira antes da substituição e
 fica fora do document root; portanto não é apagado quando `htdocs` é recriado. Os filhos são
 transferidos por seus próprios steps conforme as exclusões determinísticas do plano.
+
+A conexão de PRODUÇÃO é efêmera: `DB_USER` e `DB_PASSWORD` não entram em logs, exceções,
+`repr()`, manifestos, state ou recovery data, nem em argumentos de subprocessos. O cliente MySQL
+recebe as credenciais em `--defaults-extra-file` temporário com permissão `0600`, removido em
+sucesso e erro. O estado guarda apenas metadados não secretos. Antes de retomar a cópia do banco,
+`resume` relê o `wp-config.php`, redescobre a conexão e exige banco, host e porta iguais ao snapshot;
+usuário e senha podem mudar e não são comparados nem persistidos no estado.

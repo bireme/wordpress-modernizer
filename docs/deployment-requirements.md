@@ -32,8 +32,8 @@ somente-leitura.
 | Quais servidores de origem e impressões digitais SSH estão aprovados? | conexão e autenticidade do host | IDs de servidor, nomes DNS, portas e implantação de `known_hosts` | migrações indisponíveis |
 | Qual provedor de segredos será usado em produção? | obter credenciais sem arquivos | nome/configuração do provedor ou política de variáveis de ambiente | apenas provedor de ambiente |
 | Quais endpoints de bancos de teste são permitidos? | descoberta determinística de bancos | IDs de endpoint/DNS/portas e referências a segredos | localizador informa que não encontrou |
-| Qual endpoint MySQL corresponde a cada origem? | dump somente-leitura e resolução não ambígua | correspondência exata de `DB_HOST` ou `source_database_endpoint` | descoberta da origem é recusada |
-| Bancos de teste ausentes podem ser criados? Por quem? | a criação é privilegiada/destrutiva | booleano por endpoint e processo de concessão | nunca são criados automaticamente |
+| Qual endpoint MySQL corresponde a cada origem? | dump somente-leitura e resolução não ambígua | literais remotos de host, banco e credenciais; acesso às portas 6612/3306 ou porta explícita | descoberta da origem é recusada |
+| Bancos de teste ausentes podem ser criados? Por quem? | a criação é privilegiada/destrutiva | provisionamento prévio pela infraestrutura | nunca são criados automaticamente |
 | Quais estratégias de nomes/URLs são necessárias? | convenções específicas de cada instalação | estratégia nomeada e exemplos | substituições explícitas obrigatórias |
 | Qual política de proprietário/grupo/modo do sistema de arquivos se aplica? | permissões seguras após a cópia | UID/GID/modo ou adaptador de implantação | nenhuma alteração de proprietário |
 | Quais pontos de controle do núcleo são aceitos por site? | compatibilidade controlada de atualização | lista ordenada de versões | apenas etapas genéricas configuradas são executadas |
@@ -57,9 +57,18 @@ Antes de liberar uma origem, confirme que:
    cópia;
 8. o `app_root` permite criar `.wp-modernizer-backups`, e a política de retenção/backup externo foi
    definida;
-9. a conta MySQL da origem consegue listar o schema e ler `siteurl`, sem privilégios de escrita;
+9. a conta MySQL da origem consegue conectar ao schema, ler `siteurl` e gerar dump, sem privilégios de escrita;
 10. um teste em infraestrutura descartável confirma as exclusões do plano e os timeouts.
 
 Uma chave ausente ou diferente deve interromper o preflight. Não altere `host_key_policy: strict`
 para resolver falhas de autenticação: confiança do host e credenciais do usuário são verificações
 independentes.
+
+Bancos de PRODUÇÃO não são cadastrados em `databases:`; esse cadastro aceita somente TESTE.
+
+Sem porta explícita em `DB_HOST`, a conexão tenta 6612 e somente em caso de
+`ENDPOINT_UNAVAILABLE` tenta 3306. `AVAILABLE` encerra a descoberta com sucesso.
+`AUTHENTICATION_DENIED`, `SCHEMA_NOT_FOUND`, `CONFIGURATION_INSUFFICIENT` e `UNKNOWN`
+interrompem sem fallback: trocar de serviço ocultaria uma falha que precisa ser corrigida.
+Uma porta explícita válida (1–65535) é a única tentada. Falhas são sanitizadas; sockets e formatos
+ambíguos são recusados.
