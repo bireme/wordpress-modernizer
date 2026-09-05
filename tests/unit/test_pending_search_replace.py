@@ -86,7 +86,7 @@ def execution_context(
 ) -> dict[str, Any]:
     pending = PendingOperation(
         PendingOperationType.SEARCH_REPLACE,
-        {"organizational_domain": "bireme.org", "test_url": test_url},
+        {"source_domain": "bireme.org", "test_url": test_url},
         "transformar a URL depois da importação do banco de TESTE",
     )
     context: dict[str, Any] = {

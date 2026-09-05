@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, List, Literal, Mapping, Optional
+from typing import Any, Dict, List, Literal, Mapping, Optional
 
 from pydantic import (
     AnyHttpUrl,
@@ -12,7 +12,7 @@ from pydantic import (
 )
 
 from wp_modernizer.domain.enums import Environment
-from wp_modernizer.domain.test_url import OrganizationalTestUrlPolicy
+from wp_modernizer.domain.path_parser import InstallationPathParser
 
 
 class ServerConfig(BaseModel):
@@ -42,6 +42,13 @@ class DatabaseConfig(BaseModel):
     username_secret: str
     password_secret: str
 
+    @field_validator("environment")
+    @classmethod
+    def endpoint_is_test_only(cls, value: Environment) -> Environment:
+        if value is not Environment.TEST:
+            raise ValueError("databases aceita somente endpoints controlados de TESTE")
+        return value
+
     @model_validator(mode="before")
     @classmethod
     def reject_removed_allow_create(cls, value: object) -> object:
@@ -54,17 +61,23 @@ class DatabaseConfig(BaseModel):
 
 
 class InstallationConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     source_server: str
     source_environment: Environment
     source_path: Path
-    destination_path: Path
+    destination_path: Optional[Path] = None
     destination_environment: Environment = Environment.TEST
-    source_database_endpoint: Optional[str] = None
     test_url: Optional[AnyHttpUrl] = None
     allowed_database_endpoints: List[str]
     database_aliases: List[str] = Field(default_factory=list)
     database_override: Optional[str] = None
     core_checkpoints: List[str] = Field(default_factory=list)
+
+    @property
+    def effective_destination_path(self) -> Path:
+        """Return the single path consumed by inventory, planning, and runtime."""
+        return effective_destination_path(self)
 
     @field_validator("destination_environment")
     @classmethod
@@ -140,18 +153,12 @@ class ServerEnvironmentConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     state_directory: Path = Path("state")
-    organizational_domain: str = "bireme.org"
     allowed_app_roots: List[Path]
     servers: Dict[str, ServerConfig]
     databases: Dict[str, DatabaseConfig]
     installations: Dict[str, InstallationConfig]
     database_overrides: Dict[str, str] = Field(default_factory=dict)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
-
-    @field_validator("organizational_domain")
-    @classmethod
-    def organizational_domain_is_valid(cls, value: str) -> str:
-        return OrganizationalTestUrlPolicy(value).organizational_domain
 
     @field_validator("database_overrides")
     @classmethod
@@ -197,17 +204,19 @@ class ServerEnvironmentConfig(BaseModel):
                     "allowed_database_endpoints aceita somente destinos de TESTE; "
                     f"endpoints inválidos em {key}: {sorted(non_test)}"
                 )
-            if item.source_database_endpoint is not None:
-                source_endpoint = databases.get(item.source_database_endpoint)
-                if source_endpoint is None:
-                    raise ValueError(
-                        f"a instalação {key} referencia um banco de origem desconhecido"
-                    )
-                if source_endpoint.environment is not item.source_environment:
-                    raise ValueError(
-                        f"o banco de origem de {key} não pertence a source_environment"
-                    )
         return value
+
+    @model_validator(mode="after")
+    def installation_paths_are_safe_and_unambiguous(self) -> "ServerEnvironmentConfig":
+        parser = InstallationPathParser(self.allowed_app_roots)
+        for installation_id, item in self.installations.items():
+            parser.parse(str(item.source_path), installation_id, item.source_environment)
+            parser.parse(
+                str(item.effective_destination_path),
+                installation_id,
+                item.destination_environment,
+            )
+        return self
 
 
 class PluginsConfig(BaseModel):
@@ -218,3 +227,8 @@ class PluginsConfig(BaseModel):
 
 class ApplicationConfig(ServerEnvironmentConfig):
     managed_plugins: List[ManagedPluginConfig] = Field(default_factory=list)
+
+
+def effective_destination_path(installation: Any) -> Path:
+    """Resolve the destination once for configuration and structural port implementations."""
+    return Path(getattr(installation, "destination_path", None) or installation.source_path)

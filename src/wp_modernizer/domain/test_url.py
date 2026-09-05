@@ -10,16 +10,16 @@ from .errors import ConfigurationError, UnsafeOperationError
 class OrganizationalTestUrlPolicy:
     """Resolve URLs de TESTE dentro de uma fronteira DNS organizacional explícita."""
 
-    organizational_domain: str
+    source_domain: str
     test_label: str = "teste"
 
     def __post_init__(self) -> None:
-        domain = self.organizational_domain.rstrip(".").lower()
+        domain = self.source_domain.rstrip(".").lower()
         if not _is_dns_name(domain):
-            raise ConfigurationError("organizational_domain deve ser um hostname DNS válido")
+            raise ConfigurationError("source_domain deve ser um hostname DNS válido")
         if not _is_dns_label(self.test_label):
             raise ConfigurationError("test_label deve ser um label DNS válido")
-        object.__setattr__(self, "organizational_domain", domain)
+        object.__setattr__(self, "source_domain", domain)
 
     def resolve(self, production_url: str, explicit_test_url: str | None = None) -> str:
         production = _parse_https_url(production_url, "URL de produção")
@@ -29,15 +29,15 @@ class OrganizationalTestUrlPolicy:
             return urlunsplit(destination)
 
         production_host = production.hostname or ""
-        suffix = f".{self.organizational_domain}"
-        if production_host == self.organizational_domain:
-            test_host = f"{self.test_label}.{self.organizational_domain}"
+        suffix = f".{self.source_domain}"
+        if production_host == self.source_domain:
+            test_host = f"{self.test_label}.{self.source_domain}"
         elif production_host.endswith(suffix):
             site_name = production_host[: -len(suffix)]
-            test_host = f"{site_name}.{self.test_label}.{self.organizational_domain}"
+            test_host = f"{site_name}.{self.test_label}.{self.source_domain}"
         else:
             raise ConfigurationError(
-                "o hostname de produção não pertence a organizational_domain; "
+                "o hostname de produção não pertence a source_domain; "
                 "declare test_url explicitamente para esta exceção"
             )
 

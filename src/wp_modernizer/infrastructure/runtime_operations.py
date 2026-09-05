@@ -15,8 +15,10 @@ from wp_modernizer.application.ports import (
     WordPressConfigWriterPort,
     WordPressPort,
 )
+from wp_modernizer.config.models import effective_destination_path
 from wp_modernizer.domain.database import DatabaseLocator, ProductionTestDatabaseNamingStrategy
 from wp_modernizer.domain.enums import (
+    DatabaseAvailabilityStatus,
     Environment,
     ManagedPluginStatus,
     PendingOperationType,
@@ -31,7 +33,12 @@ from wp_modernizer.domain.errors import (
     UnsafeOperationError,
     WordPressUnavailableError,
 )
-from wp_modernizer.domain.models import PlannedStep, StepResult
+from wp_modernizer.domain.models import (
+    PlannedStep,
+    SourceDatabaseConfiguration,
+    SourceDatabaseConnection,
+    StepResult,
+)
 from wp_modernizer.domain.path_parser import InstallationPathParser
 from wp_modernizer.domain.test_url import OrganizationalTestUrlPolicy
 from wp_modernizer.domain.widgets import WidgetEvent, compare_widgets
@@ -62,7 +69,6 @@ class RuntimeOperations:
         source_inspection: SourceInspectionPort | None = None,
         filesystem: FileSystem | None = None,
         config_writer: WordPressConfigWriterPort | None = None,
-        organizational_domain: str = "bireme.org",
     ) -> None:
         self._files = files
         self._databases = databases
@@ -73,8 +79,8 @@ class RuntimeOperations:
         self._source_inspection = source_inspection
         self._filesystem = filesystem
         self._config_writer = config_writer
-        self._test_url_policy = OrganizationalTestUrlPolicy(organizational_domain)
         self._database_runs: Dict[tuple[str, str], Dict[str, Any]] = {}
+        self._source_connections: Dict[tuple[str, str], SourceDatabaseConnection] = {}
 
     def execute(self, step_name: str, context: Dict[str, Any]) -> StepResult:
         planned_step = context.get("planned_step")
@@ -85,7 +91,7 @@ class RuntimeOperations:
         )
         if installation.destination_environment is not Environment.TEST:
             raise UnsafeOperationError("Operações mutáveis são proibidas fora de TESTE")
-        path = Path(installation.destination_path)
+        path = self._effective_destination_path(installation)
         run_id = str(context["run_id"])
 
         if step_name == "backup_existing_test":
@@ -195,6 +201,7 @@ class RuntimeOperations:
             return self._copy_database(
                 step_name,
                 planned_step.installation_id,
+                installation,
                 run_id,
                 context.get("recovery_data", {}),
             )
@@ -245,7 +252,7 @@ class RuntimeOperations:
             raise UnsafeOperationError(f"Dry-run nativo desconhecido: {step_name}")
         return self._search_replace(
             step_name,
-            Path(installation.destination_path),
+            self._effective_destination_path(installation),
             context,
             str(context["run_id"]),
             dry_run=True,
@@ -271,27 +278,8 @@ class RuntimeOperations:
             source_config = self._source_inspection.inspect_config(
                 installation.source_server, source_path, run_id
             )
-            source_name = source_config.database_name
-            configured_source = getattr(installation, "source_database_endpoint", None)
-            if configured_source:
-                candidate_ids: tuple[str, ...] = (str(configured_source),)
-            else:
-                host, port = self._parse_database_host(source_config.database_host)
-                candidate_ids = tuple(
-                    endpoint_id
-                    for endpoint_id in self._databases.endpoint_ids()
-                    if self._databases.get_database(endpoint_id).environment
-                    is installation.source_environment
-                    and self._databases.get_database(endpoint_id).host == host
-                    and self._databases.get_database(endpoint_id).port == port
-                )
-            source_endpoints = tuple(
-                endpoint_id
-                for endpoint_id in candidate_ids
-                if self._databases.get_database(endpoint_id).environment
-                is installation.source_environment
-                and source_name in self._databases.list_schemas(endpoint_id)
-            )
+            source_connection = self._connect_to_source(source_config)
+            source_name = source_connection.database_name
         except (
             ConfigurationError,
             InfrastructureError,
@@ -299,18 +287,12 @@ class RuntimeOperations:
             WordPressUnavailableError,
         ) as exc:
             return self._failed(step_name, str(exc))
-        if not source_endpoints:
-            return self._failed(
-                step_name,
-                "o banco MySQL de origem não existe no endpoint configurado ou descoberto",
-            )
-        if len(source_endpoints) > 1:
-            return self._failed(step_name, "a origem MySQL foi identificada em mais de um endpoint")
         try:
-            source_url = self._databases.read_site_url(
-                source_endpoints[0], source_name, source_config.table_prefix
+            source_url = self._databases.read_source_site_url(source_connection)
+            source_installation = self._parser.parse(
+                str(source_path), installation_id, installation.source_environment
             )
-            test_url = self._test_url_policy.resolve(
+            test_url = OrganizationalTestUrlPolicy(source_installation.domain).resolve(
                 source_url,
                 str(getattr(installation, "test_url", None))
                 if getattr(installation, "test_url", None)
@@ -340,9 +322,12 @@ class RuntimeOperations:
             )
         except (AmbiguousDatabaseError, DatabaseNotFoundError) as exc:
             return self._failed(step_name, str(exc))
-        self._database_runs[(run_id, installation_id)] = {
-            "source_database_endpoint": source_endpoints[0],
+        key = (run_id, installation_id)
+        self._source_connections[key] = source_connection
+        self._database_runs[key] = {
             "source_database": source_name,
+            "source_database_host": source_connection.host,
+            "source_database_port": str(source_connection.port),
             "target_database_endpoint": target.endpoint_id,
             "target_database": target.database_name,
             "source_server": installation.source_server,
@@ -351,9 +336,7 @@ class RuntimeOperations:
             "source_url": source_url,
             "test_url": test_url,
         }
-        recovery_data.setdefault(installation_id, {}).update(
-            self._database_runs[(run_id, installation_id)]
-        )
+        recovery_data.setdefault(installation_id, {}).update(self._database_runs[key])
         return self._ok(step_name, False, "origem e destino MySQL resolvidos sem ambiguidade")
 
     def _refresh_managed_plugins(
@@ -530,6 +513,7 @@ class RuntimeOperations:
         self,
         step_name: str,
         installation_id: str,
+        installation: Any,
         run_id: str,
         recovery_data: Dict[str, Dict[str, str]],
     ) -> StepResult:
@@ -537,17 +521,40 @@ class RuntimeOperations:
         state = self._database_runs.get(key) or recovery_data.get(installation_id)
         if not state:
             return self._failed(step_name, "não há instantâneo MySQL desta execução para importar")
+        connection = self._source_connections.get(key)
+        if connection is None:
+            if self._source_inspection is None:
+                return self._failed(
+                    step_name, "o adapter de inspeção remota da origem não está configurado"
+                )
+            try:
+                discovered = self._source_inspection.inspect_config(
+                    installation.source_server, Path(installation.source_path), run_id
+                )
+                connection = self._connect_to_source(discovered)
+            except (
+                ConfigurationError,
+                InfrastructureError,
+                UnsafeOperationError,
+                WordPressUnavailableError,
+            ) as exc:
+                return self._failed(step_name, str(exc))
+            if (
+                connection.database_name != state.get("source_database")
+                or connection.host != state.get("source_database_host")
+                or str(connection.port) != state.get("source_database_port")
+            ):
+                return self._failed(
+                    step_name,
+                    "a conexão MySQL de origem mudou desde o snapshot; importação recusada",
+                )
+            self._source_connections[key] = connection
         with tempfile.NamedTemporaryFile(
             prefix="wp-modernizer-", suffix=".sql", delete=False
         ) as handle:
             dump_path = Path(handle.name)
         try:
-            self._databases.dump(
-                state.get("source_database_endpoint", state.get("source_endpoint", "")),
-                state["source_database"],
-                dump_path,
-                run_id,
-            )
+            self._databases.dump_source(connection, dump_path, run_id)
             self._databases.import_dump(
                 state.get("target_database_endpoint", state.get("target_endpoint", "")),
                 state["target_database"],
@@ -581,7 +588,12 @@ class RuntimeOperations:
             )
         self._config_writer.set_config(path, values, run_id)
         self._database_runs.pop(key, None)
+        self._source_connections.pop(key, None)
         return self._ok(step_name, True, "wp-config aponta para o banco do ambiente de teste")
+
+    @staticmethod
+    def _effective_destination_path(installation: Any) -> Path:
+        return effective_destination_path(installation)
 
     @staticmethod
     def _backup_path(app_root: Path, run_id: str, installation_id: str) -> Path:
@@ -599,7 +611,7 @@ class RuntimeOperations:
         return app_root / ".wp-modernizer-backups" / component(run_id) / component(installation_id)
 
     @staticmethod
-    def _parse_database_host(value: str) -> tuple[str, int]:
+    def _parse_database_host(value: str) -> tuple[str, int | None]:
         raw = value.strip()
         if not raw or any(character in raw for character in "\r\n\x00"):
             raise ConfigurationError("DB_HOST remoto está vazio ou contém caracteres inválidos")
@@ -610,20 +622,51 @@ class RuntimeOperations:
             host = raw[1:closing]
             suffix = raw[closing + 1 :]
             if not suffix:
-                return host, 3306
+                return host, None
             if not suffix.startswith(":") or not suffix[1:].isdigit():
                 raise ConfigurationError("DB_HOST remoto possui socket ou formato não suportado")
-            return host, int(suffix[1:])
+            port = int(suffix[1:])
+            if not 1 <= port <= 65535:
+                raise ConfigurationError("DB_HOST remoto possui porta inválida")
+            return host, port
         if raw.count(":") == 1:
-            host, port = raw.rsplit(":", 1)
-            if not host or not port.isdigit():
+            host, port_text = raw.rsplit(":", 1)
+            if not host or not port_text.isdigit():
                 raise ConfigurationError("DB_HOST remoto possui formato não suportado")
-            return host, int(port)
+            parsed_port = int(port_text)
+            if not 1 <= parsed_port <= 65535:
+                raise ConfigurationError("DB_HOST remoto possui porta inválida")
+            return host, parsed_port
         if ":" in raw:
             raise ConfigurationError(
-                "DB_HOST remoto ambíguo; configure source_database_endpoint explicitamente"
+                "DB_HOST remoto possui formato IPv6 não suportado; use colchetes"
             )
-        return raw, 3306
+        return raw, None
+
+    def _connect_to_source(self, source: SourceDatabaseConfiguration) -> SourceDatabaseConnection:
+        host, explicit_port = self._parse_database_host(source.database_host)
+        ports = (explicit_port,) if explicit_port is not None else (6612, 3306)
+        attempted_ports = []
+        for port in ports:
+            attempted_ports.append(port)
+            connection = SourceDatabaseConnection(
+                host=host,
+                port=port,
+                database_name=source.database_name,
+                username=source.database_user,
+                password=source.database_password,
+                table_prefix=source.table_prefix,
+            )
+            status = self._databases.probe_source(connection).status
+            if status is DatabaseAvailabilityStatus.AVAILABLE:
+                return connection
+            if status is not DatabaseAvailabilityStatus.ENDPOINT_UNAVAILABLE:
+                break
+        attempted = ", ".join(str(port) for port in attempted_ports)
+        raise InfrastructureError(
+            "não foi possível conectar e autenticar no banco MySQL de origem "
+            f"no host descoberto (portas tentadas: {attempted})"
+        )
 
     def _search_replace(
         self,
@@ -667,7 +710,7 @@ class RuntimeOperations:
                         step_name, "search-replace recusado: URLs de origem e destino coincidem"
                     )
                 new_url = OrganizationalTestUrlPolicy(
-                    pending.parameters.get("organizational_domain", "")
+                    pending.parameters.get("source_domain", "")
                 ).resolve(old_url, explicit_url)
             if old_url.rstrip("/") == new_url.rstrip("/"):
                 return self._failed(

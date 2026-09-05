@@ -144,9 +144,7 @@ def test_migration_plan_round_trip_preserves_step_metadata(tmp_path: Path) -> No
     parser = InstallationPathParser([Path("/home/apps")])
     parent = parser.parse("/home/apps/example.org/wp-test/htdocs", "parent", Environment.TEST)
     child = parser.parse("/home/apps/example.org/wp-test/htdocs/child", "child", Environment.TEST)
-    plan = MigrationPlanner().build(
-        "parent", Environment.PRODUCTION, "source", "database", [parent, child]
-    )
+    plan = MigrationPlanner().build("parent", Environment.PRODUCTION, "source", [parent, child])
     manifest = RunManifest(
         "run-id",
         "parent",
