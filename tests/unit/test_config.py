@@ -202,25 +202,14 @@ def test_allowed_database_endpoints_rejects_production_endpoints() -> None:
         "password_secret": "PROD_DB_PASS",
     }
     raw["installations"]["i"]["allowed_database_endpoints"] = ["prod"]
-    with pytest.raises(ValidationError, match="somente destinos de TESTE"):
+    with pytest.raises(ValidationError, match="somente endpoints controlados de TESTE"):
         ApplicationConfig.model_validate(raw)
 
 
-def test_explicit_source_database_endpoint_is_separate_and_matches_environment() -> None:
+def test_removed_source_endpoint_and_production_database_are_rejected() -> None:
     raw = valid_config()
-    raw["databases"]["prod"] = {
-        "host": "prod-db.example.invalid",
-        "environment": "production",
-        "username_secret": "PROD_DB_USER",
-        "password_secret": "PROD_DB_PASS",
-    }
     raw["installations"]["i"]["source_database_endpoint"] = "prod"
-    config = ApplicationConfig.model_validate(raw)
-    assert config.installations["i"].source_database_endpoint == "prod"
-    assert config.installations["i"].allowed_database_endpoints == ["d"]
-
-    raw["installations"]["i"]["source_database_endpoint"] = "d"
-    with pytest.raises(ValidationError, match="source_environment"):
+    with pytest.raises(ValidationError, match=r"(?s)source_database_endpoint.*Extra inputs"):
         ApplicationConfig.model_validate(raw)
 
 
@@ -228,6 +217,42 @@ def test_config_rejects_relative_allowed_root() -> None:
     raw = valid_config()
     raw["allowed_app_roots"] = ["relative/path"]
     with pytest.raises(ValidationError, match="caminhos absolutos"):
+        ApplicationConfig.model_validate(raw)
+
+
+def test_destination_path_omitted_uses_source_path() -> None:
+    raw = valid_config()
+    del raw["installations"]["i"]["destination_path"]
+    item = ApplicationConfig.model_validate(raw).installations["i"]
+    assert item.destination_path is None
+    assert item.effective_destination_path == item.source_path
+
+
+def test_explicit_destination_path_takes_precedence() -> None:
+    item = ApplicationConfig.model_validate(valid_config()).installations["i"]
+    assert item.effective_destination_path == Path("/home/apps/example.org/wp-test/htdocs")
+    assert item.effective_destination_path != item.source_path
+
+
+def test_nested_wordpress_path_remains_valid_when_destination_is_omitted() -> None:
+    raw = valid_config()
+    raw["installations"]["i"]["source_path"] += "/decs"
+    del raw["installations"]["i"]["destination_path"]
+    item = ApplicationConfig.model_validate(raw).installations["i"]
+    assert item.effective_destination_path == Path("/home/apps/example.org/wp-main/htdocs/decs")
+
+
+def test_config_rejects_source_path_without_derivable_domain() -> None:
+    raw = valid_config()
+    raw["installations"]["i"]["source_path"] = "/home/apps/wp-main/htdocs"
+    with pytest.raises(Exception, match=r"Esperado|estrutura"):
+        ApplicationConfig.model_validate(raw)
+
+
+def test_removed_global_organizational_domain_is_rejected() -> None:
+    raw = valid_config()
+    raw["organizational_domain"] = "example.org"
+    with pytest.raises(ValidationError, match="organizational_domain"):
         ApplicationConfig.model_validate(raw)
 
 

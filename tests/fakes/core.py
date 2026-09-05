@@ -23,7 +23,11 @@ class FakeCommandRunner:
 
     def run(self, argv: Sequence[str], **kwargs: Any) -> FakeCommandResult:
         self.calls.append(tuple(argv))
-        return self.results.pop(0) if self.results else FakeCommandResult()
+        result = self.results.pop(0) if self.results else FakeCommandResult()
+        if kwargs.get("stdout_path") is not None:
+            kwargs["stdout_path"].write_text(result.stdout)
+            result.stdout = ""
+        return result
 
 
 class FakeExecutableLocator:

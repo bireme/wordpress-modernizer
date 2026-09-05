@@ -78,7 +78,7 @@ def configured(tmp_path: Path) -> ApplicationConfig:
                 "site": {
                     "source_server": "source",
                     "source_environment": "production",
-                    "source_path": "/remote/example.org/wp-main/htdocs",
+                    "source_path": str(tmp_path / "example.org/wp-main/htdocs"),
                     "destination_path": str(tmp_path / "example.org/wp-test/htdocs"),
                     "destination_environment": "test",
                     "allowed_database_endpoints": ["test-db"],

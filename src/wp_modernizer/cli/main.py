@@ -71,7 +71,7 @@ def build_service(
     wpcli = WPCLIAdapter(command_runner)
     config_writer = WordPressConfigWriter()
     database_endpoints = {
-        installation.destination_path: tuple(
+        installation.effective_destination_path: tuple(
             endpoint_id
             for endpoint_id in installation.allowed_database_endpoints
             if config.databases[endpoint_id].environment is Environment.TEST
@@ -88,7 +88,6 @@ def build_service(
         source_inspection=ssh,
         filesystem=filesystem,
         config_writer=config_writer,
-        organizational_domain=config.organizational_domain,
     )
     return ModernizerService(
         config,
