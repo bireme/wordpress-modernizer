@@ -16,6 +16,12 @@ from wp_modernizer.domain.models import (
     StepResult,
     WordPressInstallation,
 )
+from wp_modernizer.domain.modernization import (
+    PhpRuntime,
+    ProvisioningSuggestion,
+    ResolvedTarget,
+    RuntimeSelection,
+)
 from wp_modernizer.domain.widgets import WidgetSnapshot
 
 
@@ -202,3 +208,31 @@ class MutableOperations(Protocol):
 
 class WordPressConfigWriterPort(Protocol):
     def set_config(self, path: Path, values: Mapping[str, str], run_id: str) -> None: ...
+
+
+class WordPressVersionPort(Protocol):
+    def inspect_version(self, server_id: str, path: Path, run_id: str) -> str: ...
+
+
+class LocalWordPressVersionPort(Protocol):
+    def inspect_version(self, path: Path) -> str: ...
+
+
+class PhpRuntimeDiscoveryPort(Protocol):
+    def inspect(self, runtime: PhpRuntime) -> PhpRuntime: ...
+
+
+class TargetVersionPort(Protocol):
+    def resolve(self) -> ResolvedTarget: ...
+
+
+class ProvisioningAdvicePort(Protocol):
+    def suggest(self, selection: RuntimeSelection) -> ProvisioningSuggestion: ...
+
+
+class RoutedWordPressPort(WordPressPort, Protocol):
+    def with_runtime(self, binary: str) -> WordPressPort: ...
+
+
+class RoutedCapabilityProbePort(CapabilityProbePort, Protocol):
+    def with_runtime(self, binary: str) -> CapabilityProbePort: ...

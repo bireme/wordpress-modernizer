@@ -5,6 +5,40 @@ topologia e as referências específicas do servidor/ambiente; as variáveis de 
 valores secretos. `EnvironmentSecretProvider` gera um erro operacional quando falta uma
 referência. Um futuro adaptador de cofre precisa apenas implementar `SecretProvider`.
 
+## Runtimes PHP e destino WordPress
+
+Configure caminhos absolutos e a versão esperada de cada PHP. `current` é obrigatório quando o
+mapa não está vazio e identifica o runtime final; outros nomes podem ser adicionados sem mudança
+de código:
+
+```yaml
+latest_wordpress: "7.1"
+wpcli_binary: /usr/local/bin/wp
+php_runtimes:
+  "7.4":
+    binary: /usr/bin/php7.4
+    version: "7.4"
+  "8.2":
+    binary: /usr/bin/php8.2
+    version: "8.2"
+  current:
+    binary: /usr/bin/php8.5
+    version: "8.5"
+```
+
+`latest_wordpress` é a versão estável mais recente aprovada pela organização e aceita pela matriz
+de compatibilidade auditada na política. Ela evita scraping durante `plan`; o valor resolvido fica
+preso ao manifesto do run. O binário existir não basta: `plan` executa somente `<binary> -v`,
+confirma a família real e rejeita divergências. Os valores são argumentos estruturados, não
+comandos shell configuráveis.
+
+Para adicionar um checkpoint, acrescente um `LegacyCheckpoint` à política central em
+`domain/modernization.py`, declare um `PhpRuntimeRequirement` exato ou mínimo e incremente a
+revisão. O planner, pipeline, state e resume consomem a coleção declarativa sem novos desvios
+procedurais. Uma futura rota ANCIENT também pode baixar `automatic_minimum` e declarar checkpoints
+PHP 5.6/7.2 na mesma política. `core_checkpoints` por instalação foi substituído por essa política
+versionada.
+
 ## Plugins gerenciados
 
 A lista pública, padronizada e compartilhada de plugins gerenciados fica separadamente em
@@ -45,7 +79,8 @@ inferir genericamente a persistência do filesystem.
 ## Bancos de dados
 
 A origem e o destino têm resoluções independentes. A porta de inspeção remota lê somente
-`<source_path>/wp-config.php` por SSH/SFTP e extrai os literais `DB_NAME`, `DB_HOST`, `DB_USER`, `DB_PASSWORD` e
+`<source_path>/wp-config.php` e `<source_path>/wp-includes/version.php` por SSH/SFTP. O primeiro
+extrai os literais `DB_NAME`, `DB_HOST`, `DB_USER`, `DB_PASSWORD` e
 `$table_prefix`, inclusive em `--dry-run`. Ela usa a mesma autenticação e a mesma verificação de
 host key do transporte, sem copiar a árvore para o destino e sem executar WP-CLI, PHP ou o
 bootstrap do WordPress em PRODUÇÃO. O conteúdo integral do arquivo e seus segredos nunca são

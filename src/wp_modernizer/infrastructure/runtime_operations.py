@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import tempfile
+from copy import copy
 from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, ClassVar, Dict, Tuple
+from typing import Any, ClassVar, Dict, Tuple, cast
 
 from wp_modernizer.application.ports import (
     DatabasePort,
     FileSystem,
     FileTransferPort,
     ManagedPluginPort,
+    PhpRuntimeDiscoveryPort,
+    RoutedWordPressPort,
     SourceInspectionPort,
     WordPressConfigWriterPort,
     WordPressPort,
@@ -39,6 +42,7 @@ from wp_modernizer.domain.models import (
     SourceDatabaseConnection,
     StepResult,
 )
+from wp_modernizer.domain.modernization import version
 from wp_modernizer.domain.path_parser import InstallationPathParser
 from wp_modernizer.domain.test_url import OrganizationalTestUrlPolicy
 from wp_modernizer.domain.widgets import WidgetEvent, compare_widgets
@@ -69,7 +73,9 @@ class RuntimeOperations:
         source_inspection: SourceInspectionPort | None = None,
         filesystem: FileSystem | None = None,
         config_writer: WordPressConfigWriterPort | None = None,
+        runtime_discovery: PhpRuntimeDiscoveryPort | None = None,
     ) -> None:
+        self._runtime_discovery = runtime_discovery
         self._files = files
         self._databases = databases
         self._wordpress = wordpress
@@ -86,6 +92,24 @@ class RuntimeOperations:
         planned_step = context.get("planned_step")
         if not isinstance(planned_step, PlannedStep):
             raise UnsafeOperationError(f"Etapa {step_name} não possui plano de execução")
+        if planned_step.php is not None and not context.get("runtime_bound"):
+            selection = planned_step.php
+            if selection.runtime is None or self._runtime_discovery is None:
+                return self._failed(step_name, "Required PHP runtime is not configured")
+            runtime = self._runtime_discovery.inspect(selection.runtime)
+            if (
+                not runtime.verified
+                or not runtime.detected_version
+                or not selection.requirement.accepts(runtime.detected_version)
+            ):
+                return self._failed(
+                    step_name, f"Required PHP runtime missing or incompatible: {runtime.binary}"
+                )
+            bound = copy(self)
+            bound._wordpress = cast(RoutedWordPressPort, self._wordpress).with_runtime(
+                runtime.binary
+            )
+            return bound.execute(step_name, {**context, "runtime_bound": True})
         installation = context.get("installations", {}).get(
             planned_step.installation_id, context["installation"]
         )
@@ -93,6 +117,32 @@ class RuntimeOperations:
             raise UnsafeOperationError("Operações mutáveis são proibidas fora de TESTE")
         path = self._effective_destination_path(installation)
         run_id = str(context["run_id"])
+
+        if planned_step.wordpress_target is not None:
+            try:
+                target = planned_step.wordpress_target
+                # core version/update do not bootstrap the old WordPress installation.
+                actual = self._wordpress.update(path, ("core", "version"), run_id).strip()
+                if version(actual) > version(target):
+                    return self._failed(step_name, "Refusing a WordPress downgrade")
+                changed = version(actual) < version(target)
+                if changed:
+                    self._wordpress.update(path, ("core", "update", f"--version={target}"), run_id)
+                self._wordpress.update(path, ("core", "update-db"), run_id)
+                actual = self._wordpress.update(path, ("core", "version"), run_id).strip()
+                if version(actual) != version(target):
+                    return self._failed(
+                        step_name, f"Checkpoint version mismatch: expected {target}"
+                    )
+                self._wordpress.update(path, ("core", "verify-checksums"), run_id)
+                self._wordpress.get_site_url(path, run_id)
+                return self._ok(
+                    step_name,
+                    changed,
+                    f"WordPress {target}: database and reduced bootstrap validated",
+                )
+            except (WordPressUnavailableError, ValueError) as exc:
+                return self._failed(step_name, f"Checkpoint failed; TEST preserved: {exc}")
 
         if step_name == "backup_existing_test":
             if self._filesystem is None:
@@ -243,6 +293,24 @@ class RuntimeOperations:
             raise UnsafeOperationError(f"Etapa {step_name} não possui plano de validação")
         if planned_step.capability is not StepCapability.MUTABLE_WITH_NATIVE_DRY_RUN:
             raise UnsafeOperationError(f"Etapa {step_name} não possui dry-run nativo autorizado")
+        if planned_step.php is not None and not context.get("runtime_bound"):
+            selection = planned_step.php
+            if selection.runtime is None or self._runtime_discovery is None:
+                return self._failed(step_name, "Required PHP runtime is not configured")
+            runtime = self._runtime_discovery.inspect(selection.runtime)
+            if (
+                not runtime.verified
+                or not runtime.detected_version
+                or not selection.requirement.accepts(runtime.detected_version)
+            ):
+                return self._failed(
+                    step_name, f"Required PHP runtime missing or incompatible: {runtime.binary}"
+                )
+            bound = copy(self)
+            bound._wordpress = cast(RoutedWordPressPort, self._wordpress).with_runtime(
+                runtime.binary
+            )
+            return bound.validate(step_name, {**context, "runtime_bound": True})
         installation = context.get("installations", {}).get(
             planned_step.installation_id, context["installation"]
         )

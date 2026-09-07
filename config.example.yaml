@@ -1,6 +1,23 @@
 # Em container, use um volume persistente para permitir resume.
 state_directory: ./state
 
+# A versão estável mais recente aprovada pela política da organização. Ela é
+# resolvida durante plan e persistida no manifesto para que resume não mude a rota.
+latest_wordpress: "7.1"
+wpcli_binary: /usr/local/bin/wp
+
+# Binários coexistem. O modernizer nunca altera o `php` global do host.
+php_runtimes:
+  "7.4":
+    binary: /usr/bin/php7.4
+    version: "7.4"
+  "8.2":
+    binary: /usr/bin/php8.2
+    version: "8.2"
+  current:
+    binary: /usr/bin/php8.5
+    version: "8.5"
+
 allowed_app_roots:
   - /home/apps
 
@@ -32,7 +49,6 @@ installations:
     destination_environment: test
     allowed_database_endpoints: [test-db]
     database_aliases: []
-    core_checkpoints: []
 
 database_overrides: {}
 

@@ -1,13 +1,25 @@
 # Requisitos de implantação ainda necessários
 
+## PHP lado a lado
+
+O servidor operacional de TESTE deve disponibilizar o WP-CLI no caminho absoluto configurado e
+todos os binários PHP exigidos pela rota. PHP 7.4 pode coexistir com PHP 8.1, 8.2, 8.3, 8.4 ou o
+runtime `current`; cada processo é invocado explicitamente como `/usr/bin/phpX.Y /caminho/wp`.
+Não configure `update-alternatives` para o modernizer e não dependa do `php` global.
+
+PHP 7.4 está EOL. Trate-o como dependência transitória isolada, obtida de uma fonte de pacotes
+aprovada pela organização, e remova-o depois que todas as instalações antigas forem modernizadas,
+se nenhuma outra aplicação depender dele. O modernizer não instala pacotes, não usa `sudo`, não
+adiciona PPA/repositório e não modifica Apache, Nginx ou FPM.
+
 ## Executáveis verificados no preflight
 
 O conjunto é derivado da operação e das etapas que realmente serão executadas:
 
 | Capability | Executável | Quando é obrigatória |
 |---|---|---|
-| `PHP_AVAILABLE` | `php` | diagnóstico operacional e fluxos que usam WP-CLI |
-| `WPCLI_AVAILABLE` | `wp` | operações WordPress |
+| `PHP_AVAILABLE` | caminho de cada runtime PHP | diagnóstico operacional e etapa que usa WP-CLI |
+| `WPCLI_AVAILABLE` | `wpcli_binary` absoluto | operações WordPress |
 | `MYSQL_AVAILABLE` | `mysql` | inspeção, importação e proteção do banco |
 | `MYSQLDUMP_AVAILABLE` | `mysqldump` | cópia real do banco |
 | `SSH_AVAILABLE` | `ssh` | cópia real com autenticação por chave |
@@ -36,7 +48,7 @@ somente-leitura.
 | Bancos de teste ausentes podem ser criados? Por quem? | a criação é privilegiada/destrutiva | provisionamento prévio pela infraestrutura | nunca são criados automaticamente |
 | Quais estratégias de nomes/URLs são necessárias? | convenções específicas de cada instalação | estratégia nomeada e exemplos | substituições explícitas obrigatórias |
 | Qual política de proprietário/grupo/modo do sistema de arquivos se aplica? | permissões seguras após a cópia | UID/GID/modo ou adaptador de implantação | nenhuma alteração de proprietário |
-| Quais pontos de controle do núcleo são aceitos por site? | compatibilidade controlada de atualização | lista ordenada de versões | apenas etapas genéricas configuradas são executadas |
+| Qual revisão da política de Core/PHP foi aprovada? | compatibilidade controlada de atualização | `policy_id`, revisão e `latest_wordpress` | execução bloqueada até configurar um destino auditado |
 | Quais plugins gerenciados e qual política para árvore suja se aplicam? | evitar perder trabalho local | repositório público/acessível, branch e política | atualização gerenciada ignorada |
 | Onde o estado externo é mantido e copiado? | durabilidade da retomada e auditoria | diretório absoluto e política de retenção/criptografia | apenas estado local configurado |
 | Quais referências de usuário e senha SSH serão provisionadas? | autenticação do transporte SFTP | nomes das entradas no `SecretProvider`; nunca os valores | cópia remota indisponível |

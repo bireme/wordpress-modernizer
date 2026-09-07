@@ -5,6 +5,7 @@ from typing import Any, Dict, Protocol
 from wp_modernizer.application.ports import MutableOperations
 from wp_modernizer.domain.enums import Capability, HealthStatus, StepCapability
 from wp_modernizer.domain.models import PlannedStep, StepResult
+from wp_modernizer.domain.modernization import ModernizationRoute
 
 
 class Step(Protocol):
@@ -144,3 +145,29 @@ UPDATE_STEP_NAMES = (
     "theme_languages",
     "widget_validation",
 )
+
+
+def modernization_steps(installation_id: str, route: ModernizationRoute) -> tuple[PlannedStep, ...]:
+    from dataclasses import replace
+
+    if not route.stages:
+        return ()
+    first = route.initial_php or route.stages[0].php
+    final = route.stages[-1].php
+    before = tuple(
+        replace(planned_update_step(name, installation_id), php=first)
+        for name in ("preflight", "pending_search_replace", "snapshot")
+    )
+    checkpoints = tuple(
+        replace(
+            planned_update_step(f"wordpress_checkpoint_{stage.wordpress}", installation_id),
+            php=stage.php,
+            wordpress_target=stage.wordpress,
+        )
+        for stage in route.stages
+    )
+    after = tuple(
+        replace(planned_update_step(name, installation_id), php=final)
+        for name in UPDATE_STEP_NAMES[5:]
+    )
+    return before + checkpoints + after

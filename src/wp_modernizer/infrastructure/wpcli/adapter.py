@@ -6,14 +6,26 @@ from wp_modernizer.domain.errors import WordPressUnavailableError
 
 
 class WPCLIAdapter:
-    def __init__(self, runner: CommandRunner, binary: str = "wp") -> None:
+    def __init__(
+        self, runner: CommandRunner, binary: str = "wp", php_binary: str | None = None
+    ) -> None:
         self._runner = runner
         self._binary = binary
+        self._php_binary = php_binary
+
+    def with_runtime(self, binary: str) -> "WPCLIAdapter":
+        if not Path(binary).is_absolute():
+            raise ValueError("Explicit PHP binary must be absolute")
+        return WPCLIAdapter(self._runner, self._binary, binary)
+
+    @property
+    def _prefix(self) -> list[str]:
+        return [self._php_binary, self._binary] if self._php_binary else [self._binary]
 
     def get_site_url(self, path: Path, run_id: str) -> str:
         result = self._runner.run(
             [
-                self._binary,
+                *self._prefix,
                 f"--path={path}",
                 "--skip-plugins",
                 "--skip-themes",
@@ -30,7 +42,7 @@ class WPCLIAdapter:
 
     def is_multisite(self, path: Path, run_id: str) -> bool:
         result = self._runner.run(
-            [self._binary, f"--path={path}", "config", "get", "MULTISITE", "--type=constant"],
+            [*self._prefix, f"--path={path}", "config", "get", "MULTISITE", "--type=constant"],
             timeout=60,
             correlation_id=run_id,
         )
@@ -40,7 +52,7 @@ class WPCLIAdapter:
 
     def get_config(self, path: Path, name: str, run_id: str) -> str:
         result = self._runner.run(
-            [self._binary, f"--path={path}", "config", "get", name],
+            [*self._prefix, f"--path={path}", "config", "get", name],
             timeout=60,
             correlation_id=run_id,
         )
@@ -52,7 +64,7 @@ class WPCLIAdapter:
         self, path: Path, old_url: str, new_url: str, *, dry_run: bool, multisite: bool, run_id: str
     ) -> int:
         argv = [
-            self._binary,
+            *self._prefix,
             f"--path={path}",
             "--skip-plugins",
             "--skip-themes",
@@ -82,7 +94,7 @@ class WPCLIAdapter:
 
     def update(self, path: Path, arguments: Sequence[str], run_id: str) -> str:
         result = self._runner.run(
-            [self._binary, f"--path={path}", "--skip-plugins", "--skip-themes", *arguments],
+            [*self._prefix, f"--path={path}", "--skip-plugins", "--skip-themes", *arguments],
             timeout=900,
             correlation_id=run_id,
         )

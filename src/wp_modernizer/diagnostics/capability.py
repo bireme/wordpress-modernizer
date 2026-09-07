@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+from copy import copy
 from pathlib import Path
-from typing import ClassVar, Dict, List, Mapping, Sequence, Set, Tuple
+from typing import ClassVar, Dict, List, Mapping, Sequence, Set, Tuple, cast
 
 from wp_modernizer.application.ports import (
     CommandRunner,
     DatabaseProbePort,
     ExecutableLocator,
     FileSystem,
+    RoutedWordPressPort,
     WordPressPort,
 )
 from wp_modernizer.domain.enums import Capability, DatabaseAvailabilityStatus, HealthStatus
@@ -44,12 +46,21 @@ class CapabilityProbe:
     ) -> None:
         self._runner = runner
         self._filesystem = filesystem
+        self._explicit_runtime = False
         self._wp = wp_bin
         self._php = php_bin
         self._database = database
         self._wordpress = wordpress
         self._database_endpoints = database_endpoints or {}
         self._locator = executable_locator or ShutilExecutableLocator()
+
+    def with_runtime(self, binary: str) -> "CapabilityProbe":
+        bound = copy(self)
+        bound._php = binary
+        bound._explicit_runtime = True
+        if self._wordpress is not None:
+            bound._wordpress = cast(RoutedWordPressPort, self._wordpress).with_runtime(binary)
+        return bound
 
     def probe(
         self,
@@ -163,6 +174,8 @@ class CapabilityProbe:
 
     def _command(self, argv: List[str], capability: Capability) -> ProbeResult:
         try:
+            if self._explicit_runtime and argv[0] == self._wp:
+                argv = [self._php, *argv]
             result = self._runner.run(argv, timeout=90)
             message = (result.stdout or result.stderr)[-4000:]
             return ProbeResult(capability, result.return_code == 0, message)

@@ -16,6 +16,7 @@ from wp_modernizer.domain.errors import (
     WordPressUnavailableError,
 )
 from wp_modernizer.domain.models import SourceDatabaseConfiguration
+from wp_modernizer.infrastructure.modernization import parse_wordpress_version
 
 from .source_config import parse_source_config
 
@@ -77,7 +78,17 @@ class RSyncSSHAdapter:
     def inspect_config(
         self, server_id: str, path: Path, run_id: str
     ) -> SourceDatabaseConfiguration:
-        config_path = self._wordpress_config_path(path)
+        return parse_source_config(
+            self._read_wordpress_file(server_id, path, run_id, "wp-config.php")
+        )
+
+    def inspect_version(self, server_id: str, path: Path, run_id: str) -> str:
+        return parse_wordpress_version(
+            self._read_wordpress_file(server_id, path, run_id, "wp-includes/version.php")
+        )
+
+    def _read_wordpress_file(self, server_id: str, path: Path, run_id: str, filename: str) -> str:
+        config_path = self._wordpress_config_path(path).parent / filename
         server = self.get_server(server_id)
         if server.authentication != "key":
             raise ConfigurationError(
@@ -103,13 +114,13 @@ class RSyncSSHAdapter:
                 )
             if result.return_code != 0:
                 raise WordPressUnavailableError(
-                    "não foi possível ler wp-config.php na origem remota"
+                    "não foi possível ler o arquivo WordPress permitido na origem remota"
                 )
             if not output.stat().st_size or output.stat().st_size > 1024 * 1024:
                 raise WordPressUnavailableError(
-                    "wp-config.php remoto está vazio ou excede o limite"
+                    "o arquivo WordPress remoto está vazio ou excede o limite"
                 )
-            return parse_source_config(output.read_text(encoding="utf-8", errors="replace"))
+            return output.read_text(encoding="utf-8", errors="replace")
 
     @contextmanager
     def _ssh_config(self, server: ServerConfig, username: str) -> Iterator[Path]:
