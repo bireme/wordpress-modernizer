@@ -668,6 +668,19 @@ def test_key_ssh_reads_remote_config_without_wpcli_or_credentials_in_argv() -> N
     assert "user" not in " ".join(runner.calls[0])
 
 
+def test_key_ssh_detects_wordpress_version_by_reading_only_version_file() -> None:
+    key = password_server().model_copy(update={"authentication": "key", "password_secret": None})
+    runner = FakeCommandRunner([FakeCommandResult(stdout="<?php\n$wp_version = '4.9.26';\n")])
+    adapter = RSyncSSHAdapter({"source": key}, Secrets(), runner)
+
+    value = adapter.inspect_version("source", Path("/source/htdocs"), "run-1")
+
+    assert value == "4.9.26"
+    assert "cat -- /source/htdocs/wp-includes/version.php" in runner.calls[0][-1]
+    assert runner.calls[0][-1].startswith("cat -- ")
+    assert "wp " not in runner.calls[0][-1]
+
+
 def test_password_sftp_reads_remote_config_via_verified_session() -> None:
     client = FakeSSHClient()
     adapter = PasswordSFTPAdapter(
@@ -681,6 +694,17 @@ def test_password_sftp_reads_remote_config_via_verified_session() -> None:
     assert client.connect_kwargs["password"] == "password"
     assert client.exec_calls == []
     assert client.sftp.closed
+
+
+def test_password_sftp_detects_wordpress_version_without_remote_execution() -> None:
+    client = FakeSSHClient()
+    client.sftp.files["/source/htdocs/wp-includes/version.php"] = b"<?php\n$wp_version = '6.8.3';\n"
+    adapter = PasswordSFTPAdapter(
+        {"source": password_server()}, Secrets(), client_factory=lambda: client
+    )
+
+    assert adapter.inspect_version("source", Path("/source/htdocs"), "run-1") == "6.8.3"
+    assert client.exec_calls == []
 
 
 def test_local_filesystem_fingerprint_changes_and_remove(tmp_path: Path) -> None:

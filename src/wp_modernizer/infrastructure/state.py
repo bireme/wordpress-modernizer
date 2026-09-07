@@ -32,6 +32,14 @@ from wp_modernizer.domain.models import (
     StepResult,
     WordPressInstallation,
 )
+from wp_modernizer.domain.modernization import (
+    ModernizationClass,
+    ModernizationRoute,
+    ModernizationStage,
+    PhpRuntime,
+    PhpRuntimeRequirement,
+    RuntimeSelection,
+)
 from wp_modernizer.domain.widgets import WidgetOption, WidgetSnapshot
 
 
@@ -183,6 +191,8 @@ class JsonStateStore:
     def _deserialize_planned_step(raw: Dict[str, Any]) -> PlannedStep:
         return PlannedStep(
             name=raw["name"],
+            php=JsonStateStore._deserialize_runtime_selection(raw.get("php")),
+            wordpress_target=raw.get("wordpress_target"),
             mutable=raw["mutable"],
             idempotent=raw["idempotent"],
             completion_probe=raw["completion_probe"],
@@ -196,6 +206,41 @@ class JsonStateStore:
             allowed_health_regressions=frozenset(
                 HealthStatus(item) for item in raw.get("allowed_health_regressions", [])
             ),
+        )
+
+    @staticmethod
+    def _deserialize_runtime_selection(raw: Any) -> RuntimeSelection | None:
+        if raw is None:
+            return None
+        return RuntimeSelection(
+            PhpRuntimeRequirement(**raw["requirement"]),
+            PhpRuntime(**raw["runtime"]) if raw.get("runtime") else None,
+            raw["satisfies_requirement"],
+        )
+
+    @classmethod
+    def _deserialize_route(cls, raw: Any) -> ModernizationRoute:
+        stages = []
+        for stage in raw["stages"]:
+            selection = cls._deserialize_runtime_selection(stage["php"])
+            if selection is None:
+                raise ValueError("Persisted checkpoint lacks PHP selection")
+            stages.append(ModernizationStage(stage["wordpress"], stage["target"], selection))
+        return ModernizationRoute(
+            policy_id=raw["policy_id"],
+            policy_revision=raw["policy_revision"],
+            initial_wordpress=raw["initial_wordpress"],
+            modernization_class=(
+                ModernizationClass(raw["modernization_class"])
+                if raw["modernization_class"]
+                else None
+            ),
+            automation_supported=raw["automation_supported"],
+            stages=tuple(stages),
+            runtimes=tuple(PhpRuntime(**runtime) for runtime in raw.get("runtimes", [])),
+            initial_php=cls._deserialize_runtime_selection(raw.get("initial_php")),
+            reason_code=raw.get("reason_code"),
+            manual_target_wordpress=raw.get("manual_target_wordpress"),
         )
 
     @staticmethod
@@ -250,6 +295,10 @@ class JsonStateStore:
             installations=installations,
             steps=tuple(cls._deserialize_planned_step(item) for item in raw.get("steps", [])),
             pending_operations=pending,
+            modernization={
+                key: cls._deserialize_route(route)
+                for key, route in raw.get("modernization", {}).items()
+            },
         )
 
     def save_checkpoint(

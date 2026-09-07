@@ -17,6 +17,7 @@ from .enums import (
     StepStatus,
 )
 from .errors import UnsafeOperationError
+from .modernization import ModernizationRoute, RuntimeSelection
 from .widgets import WidgetSnapshot
 
 
@@ -119,6 +120,8 @@ class PlannedStep:
     capability: Optional[StepCapability] = None
     dry_run_requirements: Tuple[Capability, ...] = ()
     allowed_health_regressions: FrozenSet[HealthStatus] = frozenset()
+    php: Optional[RuntimeSelection] = None
+    wordpress_target: Optional[str] = None
 
     def __post_init__(self) -> None:
         capability = self.capability
@@ -142,6 +145,7 @@ class MigrationPlan:
     installations: Tuple[WordPressInstallation, ...]
     steps: Tuple[PlannedStep, ...]
     pending_operations: Tuple[PendingOperation, ...] = ()
+    modernization: Dict[str, ModernizationRoute] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.destination_environment is not Environment.TEST:

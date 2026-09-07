@@ -149,8 +149,60 @@ class ObservabilityConfig(BaseModel):
     otel_enabled: bool = False
 
 
+class PhpRuntimeConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    binary: Path
+    version: str
+
+    @field_validator("binary")
+    @classmethod
+    def absolute_binary(cls, value: Path) -> Path:
+        if (
+            not value.is_absolute()
+            or ".." in value.parts
+            or any(c in str(value) for c in "\n\r\x00")
+        ):
+            raise ValueError("PHP binary must be an absolute, safe path")
+        return value
+
+    @field_validator("version")
+    @classmethod
+    def stable_version(cls, value: str) -> str:
+        from wp_modernizer.domain.modernization import version
+
+        version(value)
+        return value
+
+
 class ServerEnvironmentConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    php_runtimes: Dict[str, PhpRuntimeConfig] = Field(default_factory=dict)
+    latest_wordpress: Optional[str] = None
+    wpcli_binary: Path = Path("/usr/local/bin/wp")
+
+    @field_validator("latest_wordpress")
+    @classmethod
+    def stable_target(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None:
+            from wp_modernizer.domain.modernization import version
+
+            version(value)
+        return value
+
+    @field_validator("wpcli_binary")
+    @classmethod
+    def absolute_wpcli(cls, value: Path) -> Path:
+        return PhpRuntimeConfig.absolute_binary(value)
+
+    @field_validator("php_runtimes")
+    @classmethod
+    def current_runtime_required(
+        cls, value: Dict[str, PhpRuntimeConfig]
+    ) -> Dict[str, PhpRuntimeConfig]:
+        if value and "current" not in value:
+            raise ValueError("php_runtimes requires an explicit current runtime")
+        return value
 
     state_directory: Path = Path("state")
     allowed_app_roots: List[Path]

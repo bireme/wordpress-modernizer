@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Dict, cast
 
 from wp_modernizer.application.dependencies import required_capabilities
+from wp_modernizer.application.modernization import ModernizationPlanning
 from wp_modernizer.application.ports import (
     CapabilityProbePort,
     Clock,
@@ -15,6 +16,7 @@ from wp_modernizer.application.ports import (
 )
 from wp_modernizer.config.models import ApplicationConfig
 from wp_modernizer.domain.enums import (
+    Capability,
     Environment,
     ManagedPluginStatus,
     Operation,
@@ -24,6 +26,7 @@ from wp_modernizer.domain.enums import (
 )
 from wp_modernizer.domain.errors import (
     ConfigurationError,
+    MissingCapabilityError,
     ResumeConsistencyError,
     UnsafeOperationError,
 )
@@ -41,7 +44,7 @@ from wp_modernizer.domain.path_parser import InstallationPathParser
 from wp_modernizer.domain.planning import MigrationPlanner
 from wp_modernizer.pipeline.progress import ProgressReporter
 from wp_modernizer.pipeline.runner import PipelineRunner
-from wp_modernizer.pipeline.steps import OperationStep, planned_update_steps
+from wp_modernizer.pipeline.steps import OperationStep, modernization_steps, planned_update_steps
 
 
 class ModernizerService:
@@ -54,7 +57,9 @@ class ModernizerService:
         clock: Clock,
         ids: IdGenerator,
         operations: MutableOperations,
+        modernization: ModernizationPlanning | None = None,
     ) -> None:
+        self._modernization = modernization
         self.config = config
         self._probe = probe
         self._state = state
@@ -109,11 +114,49 @@ class ModernizerService:
         return report
 
     def plan(self, installation_id: str) -> Dict[str, Any]:
-        return cast(
-            Dict[str, Any], self._serializable(asdict(self._migration_plan(installation_id)))
+        plan = self._migration_plan(installation_id)
+        payload = cast(Dict[str, Any], self._serializable(asdict(plan)))
+        payload["execution_ready"] = bool(plan.modernization) and all(
+            r.ready for r in plan.modernization.values()
         )
+        payload["execution_readiness"] = {
+            "status": "READY" if payload["execution_ready"] else "BLOCKED",
+            "reason_codes": sorted(
+                {
+                    route.reason_code
+                    for route in plan.modernization.values()
+                    if route.reason_code is not None
+                }
+            ),
+        }
+        if self._modernization:
+            missing = {
+                (
+                    selection.requirement.exact,
+                    selection.requirement.minimum,
+                    selection.requirement.maximum,
+                    selection.requirement.current,
+                    selection.runtime.binary if selection.runtime else None,
+                ): selection
+                for route in plan.modernization.values()
+                for selection in (
+                    *((route.initial_php,) if route.initial_php is not None else ()),
+                    *(stage.php for stage in route.stages),
+                )
+                if not selection.satisfies_requirement
+            }
+            payload["missing_php_runtimes"] = self._serializable(
+                [asdict(selection) for selection in missing.values()]
+            )
+            payload["provisioning_suggestions"] = self._serializable(
+                [
+                    asdict(self._modernization.advice.suggest(selection))
+                    for selection in missing.values()
+                ]
+            )
+        return payload
 
-    def _migration_plan(self, installation_id: str) -> MigrationPlan:
+    def _migration_plan(self, installation_id: str, *, local: bool = False) -> MigrationPlan:
         item = self._installation(installation_id)
         installations = []
         for key, candidate in self.config.installations.items():
@@ -139,13 +182,29 @@ class ModernizerService:
                 "executa somente após uma simulação bem-sucedida com WP-CLI reduzido",
             ),
         )
-        return MigrationPlanner().build(
+        plan = MigrationPlanner().build(
             installation_id,
             item.source_environment,
             item.source_server,
             installations,
             pending,
         )
+        if self._modernization is not None:
+            routes = {
+                node.installation_id: self._modernization.route(node.installation_id, local=local)
+                for node in installations
+            }
+            plan = replace(
+                plan,
+                modernization=routes,
+                steps=tuple(
+                    replace(step, php=routes[step.installation_id].stages[0].php)
+                    if routes[step.installation_id].stages
+                    else step
+                    for step in plan.steps
+                ),
+            )
+        return plan
 
     def execute(
         self,
@@ -163,8 +222,32 @@ class ModernizerService:
             self._state.preflight()
         item = self._installation(installation_id)
         path = item.effective_destination_path
-        migration_plan = self._migration_plan(installation_id)
-        update_steps = planned_update_steps(installation_id)
+        if self._modernization is not None and not self.config.php_runtimes:
+            # Compatibility path for configurations created before explicit routing.
+            # Configured runs are checked later through each absolute PHP binary.
+            early_requirements = {
+                Capability.MYSQL_AVAILABLE,
+                Capability.PHP_AVAILABLE,
+                Capability.WPCLI_AVAILABLE,
+            }
+            external = self._probe.probe(path, early_requirements)
+            missing = sorted((item.value for item in early_requirements if not external.has(item)))
+            if missing:
+                raise MissingCapabilityError(
+                    f"capabilities obrigatórias ausentes: {', '.join(missing)}"
+                )
+        migration_plan = self._migration_plan(installation_id, local=operation is Operation.UPDATE)
+        if self._modernization is not None:
+            self._modernization.assert_ready(migration_plan.modernization)
+        update_steps = (
+            tuple(
+                step
+                for key, route in migration_plan.modernization.items()
+                for step in modernization_steps(key, route)
+            )
+            if migration_plan.modernization
+            else planned_update_steps(installation_id)
+        )
         if operation is Operation.MIGRATE:
             planned_steps = migration_plan.steps
         elif operation is Operation.UPDATE:
@@ -264,6 +347,8 @@ class ModernizerService:
         self._runner.assert_resume_consistent(old, path)
         completed_count = self._completed_prefix(old, original_steps)
         remaining = original_steps[completed_count:]
+        if self._modernization is not None:
+            self._modernization.check_remaining(remaining)
         parameters = dict(old.execution_parameters or {})
         # Restoring mutates the database and is authorized per invocation. A previous flag
         # must never turn a later resume into an implicit restoration attempt.
@@ -386,7 +471,7 @@ class ModernizerService:
             Dict[str, object],
             self.config.model_dump(
                 mode="json",
-                exclude={"managed_plugins", "observability", "state_directory"},
+                exclude={"managed_plugins", "observability", "state_directory", "latest_wordpress"},
             ),
         )
 
@@ -464,6 +549,6 @@ class ModernizerService:
             return str(value)
         if isinstance(value, dict):
             return {key: cls._serializable(item) for key, item in value.items()}
-        if isinstance(value, (list, tuple)):
+        if isinstance(value, (list, tuple, set, frozenset)):
             return [cls._serializable(item) for item in value]
         return value

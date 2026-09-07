@@ -1,5 +1,17 @@
 # Arquitetura
 
+A modernização de versões é uma política declarativa e versionada do domínio. Ela não conhece
+subprocessos: recebe uma versão WordPress, runtimes já inspecionados e um destino resolvido, e
+produz uma rota imutável. Portas separadas inspecionam a versão da origem, descobrem PHP, resolvem
+o WordPress final e geram orientação de provisionamento. Os adapters implementam leitura remota
+restrita, `<php> -v`, destino configurado e consulta somente leitura ao sistema operacional.
+
+O caminho do dado executável é `ModernizationPolicy -> ModernizerService -> PlannedStep ->
+OperationStep -> RuntimeOperations -> WPCLIAdapter`. O runtime e o destino WordPress não são
+reinferidos nos adapters. O mesmo plano segue para o `RunManifest` e para o state; `resume` lê os
+steps originais e não recalcula a política. Consulte
+[ADR-008](adrs/ADR-008-versioned-modernization-policy.md).
+
 O pacote segue a arquitetura de portas e adaptadores com camadas pragmáticas. `domain` contém
 modelos imutáveis, enums, invariantes, análise de caminhos, nomenclatura e planejamento, sem
 importar APIs de processos externos. `application` contém os casos de uso e as portas `Protocol`.

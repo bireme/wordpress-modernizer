@@ -23,6 +23,7 @@ from wp_modernizer.domain.errors import (
     WordPressUnavailableError,
 )
 from wp_modernizer.domain.models import SourceDatabaseConfiguration
+from wp_modernizer.infrastructure.modernization import parse_wordpress_version
 
 from .source_config import parse_source_config
 
@@ -97,6 +98,16 @@ class PasswordSFTPAdapter:
     def inspect_config(
         self, server_id: str, path: Path, run_id: str
     ) -> SourceDatabaseConfiguration:
+        return parse_source_config(
+            self._read_wordpress_file(server_id, path, run_id, "wp-config.php")
+        )
+
+    def inspect_version(self, server_id: str, path: Path, run_id: str) -> str:
+        return parse_wordpress_version(
+            self._read_wordpress_file(server_id, path, run_id, "wp-includes/version.php")
+        )
+
+    def _read_wordpress_file(self, server_id: str, path: Path, run_id: str, filename: str) -> str:
         del run_id
         server = self.get_server(server_id)
         if server.authentication != "password" or server.password_secret is None:
@@ -110,7 +121,7 @@ class PasswordSFTPAdapter:
             or any(character in str(remote_path) for character in "\r\n\x00")
         ):
             raise ConfigurationError("O caminho remoto WordPress deve ser absoluto e seguro")
-        config_path = remote_path / "wp-config.php"
+        config_path = remote_path / filename
         username = self._secrets.get(server.username_secret)
         password = self._secrets.get(server.password_secret)
         client = self._client_factory()
@@ -130,13 +141,15 @@ class PasswordSFTPAdapter:
             raise CommandTimeoutError("A leitura de wp-config.php excedeu o limite de 60s") from exc
         except (OSError, paramiko.SSHException) as exc:
             raise WordPressUnavailableError(
-                "não foi possível ler wp-config.php na origem remota"
+                "não foi possível ler o arquivo WordPress permitido na origem remota"
             ) from exc
         finally:
             client.close()
         if not raw or len(raw) > 1024 * 1024:
-            raise WordPressUnavailableError("wp-config.php remoto está vazio ou excede o limite")
-        return parse_source_config(raw.decode("utf-8", errors="replace"))
+            raise WordPressUnavailableError(
+                "o arquivo WordPress remoto está vazio ou excede o limite"
+            )
+        return raw.decode("utf-8", errors="replace")
 
     @staticmethod
     def _configure_host_verification(client: Any, server: ServerConfig) -> None:

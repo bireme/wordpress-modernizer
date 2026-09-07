@@ -1,5 +1,15 @@
 # Recuperação e preservação em caso de falha
 
+A rota de modernização completa fica no manifesto: classe e versão WordPress inicial, identidade
+e revisão da política, checkpoints ordenados, requisitos PHP, binários selecionados e
+`planned_steps`. O histórico de steps registra os checkpoints concluídos; `last_successful_step` e
+`failed_step` identificam a posição atual. `resume` usa exatamente essa lista persistida, mesmo que
+a política instalada tenha evoluído, e verifica novamente o runtime exigido antes da próxima
+etapa. Um binário removido ou cuja versão mudou bloqueia a retomada sem executar WordPress.
+
+Manifestos antigos que não possuem seleção PHP explícita continuam legíveis para auditoria, mas
+não podem retomar uma rota modernizada com segurança; gere um novo plano/run.
+
 Nenhuma atualização que falha provoca reversão. O executor registra em estado externo a última
 etapa bem-sucedida, a etapa que falhou, a integridade antes/depois, detalhes fatais, pontos de
 controle, diferenças de widgets, operações pendentes e uma impressão digital do sistema de
