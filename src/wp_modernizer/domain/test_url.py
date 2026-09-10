@@ -22,9 +22,9 @@ class OrganizationalTestUrlPolicy:
         object.__setattr__(self, "source_domain", domain)
 
     def resolve(self, production_url: str, explicit_test_url: str | None = None) -> str:
-        production = _parse_https_url(production_url, "URL de produção")
+        production = _parse_http_url(production_url, "URL de produção")
         if explicit_test_url is not None:
-            destination = _parse_https_url(explicit_test_url, "test_url")
+            destination = _parse_http_url(explicit_test_url, "test_url")
             self._assert_not_production(production, destination)
             return urlunsplit(destination)
 
@@ -51,25 +51,31 @@ class OrganizationalTestUrlPolicy:
             raise UnsafeOperationError("a URL de TESTE não pode usar o hostname de produção")
 
 
-def _parse_https_url(value: str, field_name: str) -> SplitResult:
+def _parse_http_url(value: str, field_name: str) -> SplitResult:
     try:
         parsed = urlsplit(value)
         port = parsed.port
     except (TypeError, ValueError) as exc:
         raise ConfigurationError(f"{field_name} inválida") from exc
+
     if (
-        parsed.scheme.lower() != "https"
+        parsed.scheme.lower() not in {"http", "https"}
         or not parsed.hostname
         or parsed.username is not None
         or parsed.password is not None
         or not _is_dns_name(parsed.hostname)
     ):
-        raise ConfigurationError(f"{field_name} deve ser uma URL HTTPS absoluta e válida")
+        raise ConfigurationError(
+            f"{field_name} deve ser uma URL HTTP/HTTPS absoluta e válida"
+        )
+
     if parsed.query or parsed.fragment:
-        raise ConfigurationError(f"{field_name} não deve conter query string ou fragmento")
-    # A leitura antecipada torna explícita a validação de portas feita por urllib.
+        raise ConfigurationError(
+            f"{field_name} não deve conter query string ou fragmento"
+        )
+
     del port
-    return parsed._replace(scheme="https")
+    return parsed._replace(scheme=parsed.scheme.lower())
 
 
 def _netloc_with_host(parsed: SplitResult, hostname: str) -> str:
