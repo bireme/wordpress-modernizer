@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import shlex
 import socket
-import stat
+import tarfile
+import threading
 import time
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Dict, Iterable, Sequence
@@ -26,6 +28,7 @@ from wp_modernizer.domain.models import SourceDatabaseConfiguration
 from wp_modernizer.infrastructure.modernization import parse_wordpress_version
 
 from .source_config import parse_source_config
+from .tar_stream import ChannelStream, extract_tree
 
 
 class _RejectUnknownHostKey:
@@ -37,7 +40,10 @@ class _RejectUnknownHostKey:
 
 
 class PasswordSFTPAdapter:
-    """Copia árvores por SFTP; a senha é entregue somente à API SSH em memória."""
+    """Transfere tar por SSH com senha em memória; SFTP apenas para wp-config.php.
+
+    O nome público é mantido por compatibilidade com a composição existente.
+    """
 
     CONNECT_TIMEOUT_SECONDS = 30.0
     TRANSFER_TIMEOUT_SECONDS = 1800.0
@@ -71,10 +77,15 @@ class PasswordSFTPAdapter:
         server = self.get_server(server_id)
         if server.authentication != "password" or server.password_secret is None:
             raise ConfigurationError(
-                "O adaptador SFTP por senha aceita apenas servidores configurados com password"
+                "O adaptador SSH por senha aceita apenas servidores configurados com password"
             )
         remote_source = PurePosixPath(str(source))
-        if not remote_source.is_absolute() or not remote_source.name:
+        if (
+            not remote_source.is_absolute()
+            or not remote_source.name
+            or ".." in remote_source.parts
+            or "\x00" in str(remote_source)
+        ):
             raise ConfigurationError("O caminho remoto de origem deve ser absoluto e nomeado")
 
         username = self._secrets.get(server.username_secret)
@@ -181,10 +192,10 @@ class PasswordSFTPAdapter:
             )
         except HostKeyVerificationError:
             raise
-        except paramiko.BadHostKeyException as exc:
+        except paramiko.BadHostKeyException:
             raise HostKeyVerificationError(
                 "A chave do host SSH mudou ou não corresponde à identidade confiável"
-            ) from exc
+            ) from None
         except paramiko.BadAuthenticationType:
             raise AuthenticationRefusedError(
                 "O servidor SSH recusou o método de autenticação por senha"
@@ -194,14 +205,14 @@ class PasswordSFTPAdapter:
             raise PasswordAuthenticationError(
                 "Autenticação SSH recusada; verifique o usuário e a senha configurados"
             ) from None
-        except (socket.timeout, TimeoutError) as exc:
+        except (socket.timeout, TimeoutError):
             raise CommandTimeoutError(
                 f"A conexão SSH excedeu o limite de {self.CONNECT_TIMEOUT_SECONDS:g}s"
-            ) from exc
-        except (paramiko.SSHException, OSError) as exc:
+            ) from None
+        except (paramiko.SSHException, OSError):
             raise RemoteHostUnreachableError(
                 "Não foi possível alcançar ou negociar uma sessão com o host SSH"
-            ) from exc
+            ) from None
 
     def _transfer(
         self,
@@ -211,99 +222,109 @@ class PasswordSFTPAdapter:
         excludes: tuple[str, ...],
         started: float,
     ) -> None:
-        sftp = None
+        channel = None
+        timer = None
         try:
-            sftp = client.open_sftp()
-            sftp.get_channel().settimeout(self.TRANSFER_TIMEOUT_SECONDS)
-            destination_parent.mkdir(parents=True, exist_ok=True)
-            self._copy_entry(
-                sftp,
-                remote_source,
-                destination_parent / remote_source.name,
-                PurePosixPath("."),
-                excludes,
-                started,
+            remaining = self.TRANSFER_TIMEOUT_SECONDS - (time.monotonic() - started)
+            if remaining <= 0:
+                raise TimeoutError
+            transport = client.get_transport()
+            if transport is None:
+                raise TransferError("A sessão SSH não está disponível para transferência")
+            channel = transport.open_session(timeout=remaining)
+            remaining = self.TRANSFER_TIMEOUT_SECONDS - (time.monotonic() - started)
+            if remaining <= 0:
+                raise TimeoutError
+            # Closing the channel also bounds exec_command's acknowledgement wait.
+            timer = threading.Timer(remaining, channel.close)
+            timer.daemon = True
+            timer.start()
+            stream = ChannelStream(channel, started + self.TRANSFER_TIMEOUT_SECONDS)
+            command = (
+                "LC_ALL=C tar --format=gnu --hard-dereference -cf - -C "
+                + shlex.quote(str(remote_source.parent))
+                + self._remote_exclude_options(remote_source.name, excludes)
+                + " -- "
+                + shlex.quote(remote_source.name)
             )
-        except (socket.timeout, TimeoutError) as exc:
-            raise CommandTimeoutError(
-                f"A transferência SFTP excedeu o limite de {self.TRANSFER_TIMEOUT_SECONDS:g}s"
-            ) from exc
-        except CommandTimeoutError:
-            raise
-        except (OSError, paramiko.SSHException) as exc:
+            channel.exec_command(os.fsencode(command))
+            channel.shutdown_write()
+            with tarfile.open(
+                fileobj=stream, mode="r|", encoding="utf-8", errors="surrogateescape"
+            ) as archive:
+                extract_tree(
+                    archive,
+                    destination_parent,
+                    remote_source.name,
+                    lambda relative: any(
+                        self._is_excluded(PurePosixPath(*relative.parts[:index]), excludes)
+                        for index in range(1, len(relative.parts) + 1)
+                    ),
+                    stream.check_timeout,
+                )
+            # Drain padding/stdout AND stderr before waiting for the exit status.
+            while stream.read(65536):
+                pass
+            status = stream.exit_status()
+            if status != 0:
+                raise TransferError(
+                    f"A transferência SSH/tar falhou (código remoto {status}); "
+                    "verifique tar e as permissões de leitura na origem"
+                )
+        except (
+            OSError,
+            EOFError,
+            ValueError,
+            tarfile.TarError,
+            paramiko.SSHException,
+            TransferError,
+        ) as exc:
+            if isinstance(exc, TimeoutError) or (
+                time.monotonic() - started >= self.TRANSFER_TIMEOUT_SECONDS
+            ):
+                raise CommandTimeoutError(
+                    "A transferência SSH/tar excedeu o limite configurado"
+                ) from None
+            if isinstance(exc, TransferError):
+                raise
+            # Never propagate remote stderr or third-party exception text (may contain secrets).
             raise TransferError(
-                "A transferência SFTP falhou; consulte o diagnóstico seguro"
-            ) from exc
+                "A transferência SSH/tar falhou: stream inválido, conexão interrompida "
+                "ou destino inacessível"
+            ) from None
         finally:
-            if sftp is not None:
-                sftp.close()
+            if timer is not None:
+                timer.cancel()
+            if channel is not None:
+                channel.close()
 
-    def _copy_entry(
-        self,
-        sftp: Any,
-        remote: PurePosixPath,
-        local: Path,
-        relative: PurePosixPath,
-        excludes: tuple[str, ...],
-        started: float,
-    ) -> None:
-        self._assert_within_timeout(started)
-        if relative != PurePosixPath(".") and self._is_excluded(relative, excludes):
-            return
-        attributes = sftp.lstat(remote.as_posix())
-        mode = attributes.st_mode
-        if stat.S_ISDIR(mode):
-            if local.exists() and (not local.is_dir() or local.is_symlink()):
-                raise OSError("o destino local conflita com um diretório remoto")
-            local.mkdir(parents=True, exist_ok=True)
-            for child in sftp.listdir_attr(remote.as_posix()):
-                self._validate_entry_name(child.filename)
-                child_relative = (
-                    PurePosixPath(child.filename)
-                    if relative == PurePosixPath(".")
-                    else relative / child.filename
-                )
-                self._copy_entry(
-                    sftp,
-                    remote / child.filename,
-                    local / child.filename,
-                    child_relative,
-                    excludes,
-                    started,
-                )
-            self._preserve_metadata(local, attributes)
-            return
-        if stat.S_ISREG(mode):
-            if local.is_symlink():
-                raise OSError("o destino local contém um link simbólico inseguro")
-            if local.exists() and local.is_dir():
-                raise OSError("o destino local conflita com um arquivo remoto")
-            sftp.get(
-                remote.as_posix(),
-                str(local),
-                callback=lambda transferred, total: self._transfer_progress(
-                    transferred, total, started
-                ),
-            )
-            self._preserve_metadata(local, attributes)
-            return
-        if stat.S_ISLNK(mode):
-            target = sftp.readlink(remote.as_posix())
-            if local.exists() or local.is_symlink():
-                local.unlink()
-            local.symlink_to(target)
-            return
-        raise OSError("a origem contém um tipo de arquivo SFTP não suportado")
+    @staticmethod
+    def _remote_exclude_options(root: str, excludes: tuple[str, ...]) -> str:
+        """Translate literals and slash-free ASCII star globs; retain all local filters."""
 
-    def _assert_within_timeout(self, started: float) -> None:
-        if time.monotonic() - started > self.TRANSFER_TIMEOUT_SECONDS:
-            raise CommandTimeoutError(
-                f"A transferência SFTP excedeu o limite de {self.TRANSFER_TIMEOUT_SECONDS:g}s"
-            )
+        def literal(value: str) -> str:
+            return "".join("\\" + char if char in "\\*?[]" else char for char in value)
 
-    def _transfer_progress(self, transferred: int, total: int, started: float) -> None:
-        del transferred, total
-        self._assert_within_timeout(started)
+        patterns = []
+        for pattern in excludes:
+            if "\x00" in pattern or pattern == ".":
+                continue
+            wildcard = any(char in pattern for char in "*?[")
+            if wildcard and (
+                "/" in pattern or not pattern.isascii() or any(char in pattern for char in "?[]\\")
+            ):
+                # Python matches Unicode characters; GNU tar under LC_ALL=C matches bytes.
+                continue
+            translated = pattern if wildcard else literal(pattern)
+            prefix = literal(root) + "/"
+            patterns.append(prefix + translated)
+            if "/" not in pattern:
+                patterns.append(prefix + "*/" + translated)
+        if not patterns:
+            return ""
+        return " --wildcards --anchored --wildcards-match-slash" + "".join(
+            " " + shlex.quote("--exclude=" + pattern) for pattern in patterns
+        )
 
     @staticmethod
     def _normalize_excludes(source: PurePosixPath, excludes: Iterable[Path]) -> tuple[str, ...]:
@@ -315,7 +336,9 @@ class PasswordSFTPAdapter:
                     remote = remote.relative_to(source)
                 except ValueError:
                     continue
-            pattern = remote.as_posix().lstrip("./")
+            if ".." in remote.parts:
+                continue
+            pattern = remote.as_posix()
             if pattern and pattern != ".." and not pattern.startswith("../"):
                 normalized.append(pattern.rstrip("/"))
         return tuple(normalized)
@@ -332,15 +355,3 @@ class PasswordSFTPAdapter:
             elif fnmatch.fnmatchcase(value, pattern) or fnmatch.fnmatchcase(relative.name, pattern):
                 return True
         return False
-
-    @staticmethod
-    def _validate_entry_name(name: str) -> None:
-        if name in {"", ".", ".."} or "/" in name or "\x00" in name:
-            raise OSError("a origem SFTP retornou um nome de arquivo inseguro")
-
-    @staticmethod
-    def _preserve_metadata(path: Path, attributes: Any) -> None:
-        path.chmod(stat.S_IMODE(attributes.st_mode))
-        path.touch(exist_ok=True)
-        if attributes.st_atime is not None and attributes.st_mtime is not None:
-            os.utime(path, (attributes.st_atime, attributes.st_mtime), follow_symlinks=False)

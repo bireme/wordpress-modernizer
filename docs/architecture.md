@@ -17,7 +17,7 @@ modelos imutáveis, enums, invariantes, análise de caminhos, nomenclatura e pla
 importar APIs de processos externos. `application` contém os casos de uso e as portas `Protocol`.
 `pipeline` contém etapas independentes e o executor que preserva o estado em caso de falha.
 `infrastructure` fornece adaptadores de subprocessos, estado local, YAML/ambiente, MySQL,
-SSH/rsync por chave, SSH/SFTP por senha, WP-CLI, sistema de arquivos e Git. `cli` trata apenas da
+SSH/rsync por chave, SSH/tar por senha (SFTP para inspeção), WP-CLI, sistema de arquivos e Git. `cli` trata apenas da
 composição.
 
 A composition root em `cli.main.build_service` liga a configuração ao
@@ -56,3 +56,38 @@ usuário e senha podem mudar e não são comparados nem persistidos no estado.
 
 `DatabaseConfig` é exclusivo de TESTE. A origem usa `SourceDatabaseConnection` em memória,
 sem consultar o cadastro de endpoints de TESTE.
+
+
+## Nomes Unix legados na transferência por senha
+
+`PasswordSFTPAdapter` mantém o nome público e o contrato `FileTransferPort`, mas a cópia
+usa `LC_ALL=C tar --format=gnu --hard-dereference` em um canal SSH autenticado pelo Paramiko.
+`listdir_attr()` decodifica nomes como UTF-8 dentro do protocolo, antes de entregá-los ao
+adapter; aplicar `surrogateescape` depois desse ponto não resolve. O stream tar recebe os
+bytes originais: `tarfile` os decodifica com UTF-8 + `surrogateescape` desde a leitura do header,
+e o filesystem Unix os reconstitui sem transcoding ou alteração da origem.
+
+O rsync por chave já transporta nomes sem conversão de charset (não usamos `--iconv`).
+Reutilizar seu subprocesso para senha exigiria outro mecanismo de autenticação; por isso
+router e portas continuam compartilhados, mas os transportes permanecem separados.
+
+A extração é manual, sem `extractall`: valida raiz e traversal, recusa hardlinks no archive,
+arquivos especiais, links absolutos, escapes e ciclos. Links relativos contidos são validados
+como um grafo antes da criação. Caminhos locais nunca são percorridos através de symlinks.
+Arquivos são publicados por substituição de temporários privados; diretórios recebem metadados
+ao final. Owner/group não são aplicados; modos recebem `u+w,g+w`, como no rsync, removendo bits
+especiais. O destino deve estar sob controle da conta operacional, sem mutadores concorrentes.
+
+O prazo total cobre leitura, extração e espera do status remoto; um timer fecha o canal se o
+servidor não responder ao pedido de execução. Stdout e stderr são drenados antes do status;
+stderr e mensagens brutas de bibliotecas não são propagados. Erros usam categorias seguras e,
+quando há um stream válido, o código de saída remoto.
+
+Limitações: GNU tar deve existir na origem; o destino requer filesystem Unix com suporte a
+`dir_fd`/`O_NOFOLLOW`. Excludes são aplicados localmente, incluindo ancestrais excluídos, mas
+seus dados ainda trafegam e precisam ser legíveis. Hardlinks remotos viram cópias regulares;
+ACLs, xattrs e atime não são preservados. Falhas podem deixar uma árvore parcial, como antes;
+não há staging global ou mudança na autorização de mutações, que continua restrita a TESTE.
+
+Referências: [tarfile e encoding](https://docs.python.org/3/library/tarfile.html),
+[Paramiko Channel e drenagem antes do status](https://docs.paramiko.org/en/stable/api/channel.html).

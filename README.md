@@ -107,7 +107,7 @@ Para execuções reais, o servidor operacional/de TESTE precisa disponibilizar a
 * cliente MySQL;
 * acesso aos bancos de TESTE;
 * SSH/rsync para autenticação por chave; ou
-* SSH/SFTP via Paramiko para autenticação por senha;
+* SSH/tar via Paramiko para autenticação por senha;
 * acesso de leitura à instalação WordPress de origem;
 * acesso de escrita à instalação de TESTE;
 * diretório persistente e gravável para o estado do modernizer.
@@ -770,7 +770,9 @@ Cada servidor escolhe explicitamente seu método de autenticação.
 authentication: password
 ```
 
-Utiliza SSH/SFTP através do Paramiko.
+Utiliza um stream de GNU tar por SSH através do Paramiko para copiar árvores,
+preservando inclusive nomes Unix com bytes inválidos em UTF-8. Requer GNU tar na origem.
+SFTP continua sendo usado somente para ler `wp-config.php`.
 
 Usuário e senha são obtidos somente no momento da conexão.
 

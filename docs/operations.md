@@ -71,7 +71,7 @@ não prova espaço livre para o backup, conclusão de uma cópia grande ou suces
 da importação.
 
 O adaptador público de execução delega cópias à porta de transporte remoto. Um roteador usa
-SSH/rsync para autenticação por chave e SSH/SFTP (Paramiko) para autenticação por senha. A
+SSH/rsync para autenticação por chave e SSH/tar (Paramiko) para cópia por senha, com SFTP para ler `wp-config.php`. A
 inspeção da origem reutiliza esses transportes apenas para leitura do arquivo permitido; descoberta
 e transferência de bancos são delegadas ao MySQL e operações WordPress locais/de TESTE ao WP-CLI. Uma
 migração de banco descobre a conexão de origem pelo arquivo remoto e usa apenas endpoints de
