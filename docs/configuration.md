@@ -161,8 +161,8 @@ servers:
     host_key_policy: strict
 ```
 
-O valor da senha não pertence ao YAML. O adapter SFTP obtém usuário e senha somente no momento da
-conexão e os fornece à API do Paramiko, sem shell ou subprocesso. `authentication: key` continua
+O valor da senha não pertence ao YAML. O adapter SSH por senha obtém usuário e senha somente no momento da
+conexão e os fornece à API do Paramiko, sem passar credenciais ao shell ou a subprocessos. `authentication: key` continua
 disponível com `private_key` e usa OpenSSH/rsync; os dois mecanismos são adapters separados.
 
 Com `host_key_policy: strict`, o transporte carrega o `~/.ssh/known_hosts` da conta que executa a

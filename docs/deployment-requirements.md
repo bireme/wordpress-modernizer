@@ -26,14 +26,17 @@ O conjunto é derivado da operação e das etapas que realmente serão executada
 | `RSYNC_AVAILABLE` | `rsync` | cópia real com autenticação por chave |
 | `GIT_AVAILABLE` | `git` | atualização real de plugins gerenciados configurados |
 
-Etapas mutáveis omitidas por `--dry-run` não acrescentam dependências. O transporte SFTP por
-senha usa Paramiko e não exige `ssh` nem `rsync`. Uma capability obrigatória ausente interrompe a
+Etapas mutáveis omitidas por `--dry-run` não acrescentam dependências. O transporte SSH/tar por
+senha usa Paramiko e não exige `ssh` nem `rsync` locais. A cópia exige GNU tar na origem
+e permissão para executar comandos SSH (uma conta restrita a SFTP não basta). Esse requisito
+remoto não é verificado pelo preflight local; falhas são reportadas como `TransferError`. Uma capability obrigatória ausente interrompe a
 operação antes da criação do run e identifica seu nome no erro.
 
 Para autenticação por chave, a inspeção da origem (inclusive no dry-run) exige `ssh`, mas
 não `rsync`; `rsync` só é exigido pela cópia real. Para autenticação por senha, inspeção e cópia
 usam a sessão Paramiko com verificação de host key. O servidor WordPress de PRODUÇÃO não precisa
-disponibilizar `wp` nem PHP CLI: precisa apenas permitir a leitura de `wp-config.php` por SSH/SFTP.
+disponibilizar `wp` nem PHP CLI: precisa permitir a leitura de `wp-config.php` por SSH/SFTP e, para a cópia por senha,
+executar GNU tar em modo de leitura.
 WP-CLI e PHP CLI são requisitos do servidor operacional/TESTE para diagnóstico e operações locais.
 O endpoint MySQL da origem precisa aceitar as consultas `SELECT` de descoberta com uma conta
 somente-leitura.
@@ -51,7 +54,7 @@ somente-leitura.
 | Qual revisão da política de Core/PHP foi aprovada? | compatibilidade controlada de atualização | `policy_id`, revisão e `latest_wordpress` | execução bloqueada até configurar um destino auditado |
 | Quais plugins gerenciados e qual política para árvore suja se aplicam? | evitar perder trabalho local | repositório público/acessível, branch e política | atualização gerenciada ignorada |
 | Onde o estado externo é mantido e copiado? | durabilidade da retomada e auditoria | diretório absoluto e política de retenção/criptografia | apenas estado local configurado |
-| Quais referências de usuário e senha SSH serão provisionadas? | autenticação do transporte SFTP | nomes das entradas no `SecretProvider`; nunca os valores | cópia remota indisponível |
+| Quais referências de usuário e senha SSH serão provisionadas? | autenticação do transporte SSH | nomes das entradas no `SecretProvider`; nunca os valores | cópia remota indisponível |
 | Qual destino de telemetria e política de dados estão aprovados? | exportação OTLP opcional | endpoint, referências de ambiente para TLS/autenticação e retenção | apenas logs JSON locais |
 
 ## Preflight SSH por senha
