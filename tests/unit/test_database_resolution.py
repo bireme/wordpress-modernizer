@@ -228,10 +228,10 @@ def test_missing_target_fails() -> None:
 
 def test_invalid_source_site_url_fails_before_any_mutation() -> None:
     databases = Databases()
-    databases.site_url = "http://portal.bireme.org"
+    databases.site_url = "ftp://portal.bireme.org"
     result, _, databases, _ = resolve(databases=databases)
     assert result.status is StepStatus.FAILED
-    assert "HTTPS" in result.message
+    assert "HTTP/HTTPS" in result.message
     assert databases.mutable_calls == []
 
 
