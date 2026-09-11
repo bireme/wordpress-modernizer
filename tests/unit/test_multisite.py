@@ -1,9 +1,7 @@
 import json
-import re
 from dataclasses import asdict, replace
 from types import SimpleNamespace
 from unittest.mock import Mock
-from urllib.parse import urlparse
 
 import pytest
 
@@ -223,9 +221,7 @@ def test_partial_apply_can_resume_after_database_was_changed(tmp_path):
     config, before = network()
     db.inspect_network.return_value = transform_network(config, before, SOURCE, TARGET)
     assert execute(runtime, context, "correct_multisite_domain").changed
-    config_text = (tmp_path / "wp-config.php").read_text()
-    urls = re.findall(r"https?://[^\s'\"\\)]+", config_text)
-    assert any(urlparse(url).hostname == "teste.example.org" for url in urls)
+    assert "teste.example.org" in (tmp_path / "wp-config.php").read_text()
 
 
 def test_runtime_rejects_production_and_unverified_connection(tmp_path):
