@@ -82,7 +82,6 @@ def test_legacy_names_preserved_byte_for_byte(tmp_path):
         (b"source/../../escape", tarfile.REGTYPE, b"bad"),
         (b"other/file", tarfile.REGTYPE, b"bad"),
         (b"source/link", tarfile.SYMTYPE, b"../../escape"),
-        (b"source/link", tarfile.SYMTYPE, b"/tmp/escape"),
         (b"source/link", tarfile.LNKTYPE, b"source/file"),
         (b"source/fifo", tarfile.FIFOTYPE, b""),
     ],
@@ -93,6 +92,20 @@ def test_rejects_unsafe_members(tmp_path, name, kind, target):
         adapter.copy_from("s", Path("/source"), tmp_path, [], "r")
     assert client.channel.closed
     assert not (tmp_path / "escape").exists()
+
+
+def test_absolute_symlink_is_preserved(tmp_path):
+    adapter, _ = setup_adapter(
+        archive_bytes(
+            [
+                (b"source/link", tarfile.SYMTYPE, b"/tmp/escape"),
+            ]
+        )
+    )
+
+    adapter.copy_from("s", Path("/source"), tmp_path, [], "r")
+
+    assert os.readlink(tmp_path / "source/link") == "/tmp/escape"
 
 
 def test_safe_link_preserved_but_never_followed(tmp_path):

@@ -113,12 +113,7 @@ def extract_tree(
                             pass
                         directories[parts] = member
                     elif member.issym():
-                        link_path = PurePosixPath(member.linkname)
-                        if (
-                            link_path.is_absolute()
-                            or not member.linkname
-                            or "\x00" in member.linkname
-                        ):
+                        if not member.linkname or "\x00" in member.linkname:
                             raise _unsafe()
                         if parts in links:
                             raise _unsafe()
@@ -191,8 +186,11 @@ def _regular(
 def _validate_link(
     base: int, parts: tuple[str, ...], target: str, links: dict[tuple[str, ...], str]
 ) -> None:
+    target_path = PurePosixPath(target)
+    if target_path.is_absolute():
+        return
     resolved = list(parts[:-1])
-    pending = deque(PurePosixPath(target).parts)
+    pending = deque(target_path.parts)
     expansions = 0
     while pending:
         part = pending.popleft()
