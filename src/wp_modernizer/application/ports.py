@@ -22,6 +22,7 @@ from wp_modernizer.domain.modernization import (
     ResolvedTarget,
     RuntimeSelection,
 )
+from wp_modernizer.domain.multisite import NetworkConfig, NetworkSnapshot
 from wp_modernizer.domain.widgets import WidgetSnapshot
 
 
@@ -63,6 +64,18 @@ class SourceInspectionPort(ServerRegistry, Protocol):
 
 
 class DatabasePort(DatabaseRegistry, Protocol):
+    def inspect_network(self, endpoint_id: str, database: str, prefix: str) -> NetworkSnapshot: ...
+
+    def apply_network(
+        self,
+        endpoint_id: str,
+        database: str,
+        prefix: str,
+        before: NetworkSnapshot,
+        after: NetworkSnapshot,
+        run_id: str,
+    ) -> None: ...
+
     def dump(self, endpoint_id: str, database: str, output: Path, run_id: str) -> None: ...
 
     def probe_source(self, connection: SourceDatabaseConnection) -> DatabaseProbeResult: ...
@@ -207,6 +220,10 @@ class MutableOperations(Protocol):
 
 
 class WordPressConfigWriterPort(Protocol):
+    def inspect_multisite(self, path: Path) -> NetworkConfig | None: ...
+
+    def set_multisite_domain(self, path: Path, source: str, target: str, run_id: str) -> None: ...
+
     def set_config(self, path: Path, values: Mapping[str, str], run_id: str) -> None: ...
 
 

@@ -113,7 +113,14 @@ class PipelineRunner:
             # until the test database configuration has been written.
             probe_requirements = (
                 set()
-                if step.name in {"copy_files", "snapshot_source_database", "copy_database"}
+                if step.name
+                in {
+                    "copy_files",
+                    "snapshot_source_database",
+                    "copy_database",
+                    "write_test_db_config",
+                    "plan_multisite_domain",
+                }
                 else requirements
             )
             try:

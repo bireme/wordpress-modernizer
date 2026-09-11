@@ -52,7 +52,12 @@ def test_pending_search_replace_runs_after_test_database_is_prepared() -> None:
         (pending,),
     )
     names = [step.name for step in plan.steps]
-    assert names[-2:] == ["write_test_db_config", "pending_search_replace"]
+    assert names[-4:] == [
+        "write_test_db_config",
+        "plan_multisite_domain",
+        "correct_multisite_domain",
+        "pending_search_replace",
+    ]
     capabilities = {step.name: step.capability for step in plan.steps}
     assert capabilities["snapshot_source_database"] is StepCapability.READ_ONLY
     assert capabilities["copy_database"] is StepCapability.MUTABLE_WITHOUT_SAFE_DRY_RUN

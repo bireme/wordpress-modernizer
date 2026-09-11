@@ -16,6 +16,8 @@ STEP_LABELS = {
     "snapshot_source_database": "Inspecting source database",
     "copy_database": "Copying database",
     "write_test_db_config": "Updating wp-config.php",
+    "plan_multisite_domain": "Planning Multisite test domains",
+    "correct_multisite_domain": "Correcting and validating Multisite domains",
     "database_dump": "Exporting database",
     "database_import": "Importing database",
     "write_wp_config": "Updating wp-config.php",

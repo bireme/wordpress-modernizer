@@ -136,6 +136,7 @@ def test_remote_source_and_test_only_allowlist_are_resolved_conventionally() -> 
     assert databases.probed_ports == [6612]
     assert databases.source_reads == [("prod-db", 6612, "wp_portal_prod", "wp_")]
     assert recovery["site"] == {
+        "table_prefix": "wp_",
         "source_database": "wp_portal_prod",
         "source_database_host": "prod-db",
         "source_database_port": "6612",
