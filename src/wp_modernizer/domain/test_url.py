@@ -65,14 +65,10 @@ def _parse_http_url(value: str, field_name: str) -> SplitResult:
         or parsed.password is not None
         or not _is_dns_name(parsed.hostname)
     ):
-        raise ConfigurationError(
-            f"{field_name} deve ser uma URL HTTP/HTTPS absoluta e válida"
-        )
+        raise ConfigurationError(f"{field_name} deve ser uma URL HTTP/HTTPS absoluta e válida")
 
     if parsed.query or parsed.fragment:
-        raise ConfigurationError(
-            f"{field_name} não deve conter query string ou fragmento"
-        )
+        raise ConfigurationError(f"{field_name} não deve conter query string ou fragmento")
 
     del port
     return parsed._replace(scheme=parsed.scheme.lower())
