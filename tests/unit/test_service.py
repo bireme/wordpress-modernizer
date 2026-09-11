@@ -425,3 +425,31 @@ def test_old_incomplete_manifest_is_rejected_instead_of_becoming_update() -> Non
 
     with pytest.raises(ResumeConsistencyError, match=r"informação suficiente.*resume seguro"):
         service(state=state).resume("parent", "legacy", dry_run=False)
+
+
+def test_resume_after_multisite_correction_does_not_replay_completed_networks() -> None:
+    state = FakeStateStore()
+    operations = FakeOperations(fail_at="pending_search_replace")
+    app = service(operations=operations, state=state)
+    old = app.execute(Operation.PIPELINE, "parent", dry_run=False)
+    assert operations.calls.count("correct_multisite_domain") == 2
+    old.recovery_data["parent"] = {"multisite_plan": '{"persisted": true}'}
+    operations.calls.clear()
+    operations.contexts.clear()
+    operations.fail_at = None
+    resumed = app.resume("parent", old.run_id, dry_run=False)
+    assert resumed.status is RunStatus.SUCCEEDED
+    assert operations.calls[0] == "pending_search_replace"
+    assert "correct_multisite_domain" not in operations.calls
+    assert "plan_multisite_domain" not in operations.calls
+    assert resumed.recovery_data["parent"]["multisite_plan"] == '{"persisted": true}'
+
+
+def test_multisite_steps_are_only_planned_in_dry_run() -> None:
+    operations = FakeOperations()
+    result = service(operations=operations).execute(Operation.MIGRATE, "parent", dry_run=True)
+    assert "plan_multisite_domain" not in operations.calls
+    assert "correct_multisite_domain" not in operations.calls
+    for step in result.steps:
+        if step.name in {"plan_multisite_domain", "correct_multisite_domain"}:
+            assert step.status.value == "PLANNED" and not step.changed

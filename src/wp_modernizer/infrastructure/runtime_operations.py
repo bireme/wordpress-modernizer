@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import tempfile
 from copy import copy
-from dataclasses import replace
+from dataclasses import asdict, replace
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Tuple, cast
@@ -43,6 +44,14 @@ from wp_modernizer.domain.models import (
     StepResult,
 )
 from wp_modernizer.domain.modernization import version
+from wp_modernizer.domain.multisite import (
+    BlogRow,
+    NetworkConfig,
+    NetworkRow,
+    NetworkSnapshot,
+    require,
+    transform_network,
+)
 from wp_modernizer.domain.path_parser import InstallationPathParser
 from wp_modernizer.domain.test_url import OrganizationalTestUrlPolicy
 from wp_modernizer.domain.widgets import WidgetEvent, compare_widgets
@@ -264,6 +273,8 @@ class RuntimeOperations:
                 context.get("recovery_data", {}),
             )
 
+        if step_name in {"plan_multisite_domain", "correct_multisite_domain"}:
+            return self._multisite(step_name, path, context, run_id, planned_step.installation_id)
         if step_name == "preflight":
             return self._ok(step_name, False, "ponto de controle de diagnóstico concluído")
         if step_name == "snapshot":
@@ -401,6 +412,7 @@ class RuntimeOperations:
             "source_server": installation.source_server,
             "source_path": str(installation.source_path),
             "source_environment": installation.source_environment.value,
+            "table_prefix": source_connection.table_prefix,
             "source_url": source_url,
             "test_url": test_url,
         }
@@ -736,6 +748,114 @@ class RuntimeOperations:
             f"no host descoberto (portas tentadas: {attempted})"
         )
 
+    def _multisite(
+        self, step_name: str, path: Path, context: Dict[str, Any], run_id: str, installation_id: str
+    ) -> StepResult:
+        require(self._config_writer is not None, "writer não configurado")
+        assert self._config_writer is not None
+        config = self._config_writer.inspect_multisite(path)
+        state = context.get("recovery_data", {}).get(installation_id, {})
+        if config is None:
+            require(not state.get("multisite_plan"), "MULTISITE removido após planejamento")
+            return self._ok(step_name, False, "instalação não Multisite")
+        require(
+            bool(state.get("source_url") and state.get("test_url") and state.get("table_prefix")),
+            "resolução da origem/TESTE ausente",
+        )
+        endpoint, database = state["target_database_endpoint"], state["target_database"]
+        # Revalidate the complete local connection before any WordPress bootstrap.
+        values = self._databases.wordpress_configuration(endpoint, database)
+        for name, value in values.items():
+            require(
+                self._wordpress.get_config(path, name, run_id) == value,
+                "wp-config não corresponde ao banco de TESTE",
+            )
+        prefix = state["table_prefix"]
+        require(
+            self._wordpress.get_config(path, "table_prefix", run_id) == prefix,
+            "prefixo diverge da origem",
+        )
+        current = self._databases.inspect_network(endpoint, database, prefix)
+        if step_name == "plan_multisite_domain":
+            expected = transform_network(config, current, state["source_url"], state["test_url"])
+            payload = {
+                "before": asdict(current),
+                "after": asdict(expected),
+                "config": asdict(config),
+            }
+            require(
+                not state.get("multisite_plan")
+                or json.loads(state["multisite_plan"]) == json.loads(json.dumps(payload)),
+                "plano Multisite existente diverge",
+            )
+            state["multisite_plan"] = json.dumps(payload, sort_keys=True)
+            return self._ok(step_name, False, "plano Multisite inspecionado para persistência")
+        require(bool(state.get("multisite_plan")), "plano Multisite durável ausente")
+        payload = json.loads(state["multisite_plan"])
+
+        def snapshot(key: str) -> NetworkSnapshot:
+            return NetworkSnapshot(
+                tuple(NetworkRow(**n) for n in payload[key]["networks"]),
+                tuple(BlogRow(**b) for b in payload[key]["blogs"]),
+            )
+
+        before, after = snapshot("before"), snapshot("after")
+        original_config = NetworkConfig(**payload["config"])
+        target = after.networks[0].domain
+        require(
+            config == original_config or config == replace(original_config, domain=target),
+            "configuração da rede mudou após planejamento",
+        )
+        require(
+            transform_network(original_config, before, state["source_url"], state["test_url"])
+            == after,
+            "plano inválido",
+        )
+        self._databases.apply_network(endpoint, database, prefix, before, after, run_id)
+        self._config_writer.set_multisite_domain(path, original_config.domain, target, run_id)
+        require(
+            self._config_writer.inspect_multisite(path) == replace(original_config, domain=target),
+            "wp-config final divergente",
+        )
+        # Bootstrap explicitly on TEST; persistent cache/drop-in routing is rejected.
+        output = self._wordpress.update(
+            path,
+            (
+                f"--url={state['test_url']}",
+                "site",
+                "list",
+                "--format=json",
+                "--fields=blog_id,site_id,domain,path",
+            ),
+            run_id,
+        )
+        enumerated = json.loads(output)
+        expected_rows = [
+            {
+                "blog_id": str(b.blog_id),
+                "site_id": str(b.site_id),
+                "domain": b.domain,
+                "path": b.path,
+            }
+            for b in after.blogs
+        ]
+        actual_rows = [{k: str(v) for k, v in row.items()} for row in enumerated]
+        require(
+            sorted(actual_rows, key=lambda r: r["blog_id"])
+            == sorted(expected_rows, key=lambda r: r["blog_id"]),
+            "wp site list não corresponde à rede planejada",
+        )
+        require(
+            self._databases.inspect_network(endpoint, database, prefix) == after,
+            "estrutura final divergente após bootstrap",
+        )
+        state["multisite_validated"] = "true"
+        return self._ok(
+            step_name,
+            current != after or config.domain != target,
+            "domínios, paths, IDs e URLs Multisite validados em TESTE",
+        )
+
     def _search_replace(
         self,
         step_name: str,
@@ -768,7 +888,11 @@ class RuntimeOperations:
             planned_step = context.get("planned_step")
             installation_id = getattr(planned_step, "installation_id", "")
             resolution = context.get("recovery_data", {}).get(installation_id, {})
-            if dry_run and resolution.get("source_url") and resolution.get("test_url"):
+            if (
+                (dry_run or resolution.get("multisite_plan"))
+                and resolution.get("source_url")
+                and resolution.get("test_url")
+            ):
                 old_url = resolution["source_url"]
                 new_url = resolution["test_url"]
             else:

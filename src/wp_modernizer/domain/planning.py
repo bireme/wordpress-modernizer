@@ -57,7 +57,13 @@ class MigrationPlanner:
                     ),
                 )
             )
-            for name in ("snapshot_source_database", "copy_database", "write_test_db_config"):
+            for name in (
+                "snapshot_source_database",
+                "copy_database",
+                "write_test_db_config",
+                "plan_multisite_domain",
+                "correct_multisite_domain",
+            ):
                 capability = (
                     StepCapability.READ_ONLY
                     if name == "snapshot_source_database"
@@ -68,8 +74,18 @@ class MigrationPlanner:
                         name,
                         capability is not StepCapability.READ_ONLY,
                         True,
-                        "ponto de controle mais estado inspecionado",
-                        "repetir com segurança",
+                        (
+                            "plano de domínios/URLs e topologia persistido no RunManifest"
+                            if name == "plan_multisite_domain"
+                            else "wp-config, site/blogs, home/siteurl e wp site list conferem"
+                            if name == "correct_multisite_domain"
+                            else "ponto de controle mais estado inspecionado"
+                        ),
+                        (
+                            "aceitar somente valores originais ou finais do plano persistido"
+                            if name == "correct_multisite_domain"
+                            else "repetir com segurança"
+                        ),
                         node.installation_id,
                         capability=capability,
                         dry_run_requirements=(

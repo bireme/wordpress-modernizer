@@ -19,6 +19,7 @@ from wp_modernizer.domain.errors import (
     UnsafeOperationError,
 )
 from wp_modernizer.domain.models import DatabaseProbeResult, SourceDatabaseConnection
+from wp_modernizer.domain.multisite import BlogRow, NetworkRow, NetworkSnapshot, require
 from wp_modernizer.domain.widgets import WidgetOption, WidgetSnapshot
 
 
@@ -180,6 +181,145 @@ class MySQLAdapter:
                 correlation_id=run_id,
             )
         self._ensure_success(result.return_code, result.stderr)
+
+    def inspect_network(self, endpoint_id: str, database: str, prefix: str) -> NetworkSnapshot:
+        require(
+            self.get_database(endpoint_id).environment is Environment.TEST,
+            "inspeção estrutural restrita a TESTE",
+        )
+        require(bool(re.fullmatch(r"[A-Za-z0-9_]{1,56}", prefix)), "prefixo inseguro")
+        tables = set(self._query(endpoint_id, "SHOW TABLES", database).splitlines())
+        require({prefix + "site", prefix + "blogs"} <= tables, "tabelas site/blogs ausentes")
+
+        def rows(table: str, columns: str) -> list[list[str]]:
+            return [
+                line.split("\t")
+                for line in self._query(
+                    endpoint_id,
+                    f"SELECT {columns} FROM `{table}`",  # noqa: S608
+                    database,
+                ).splitlines()
+            ]
+
+        def decode(value: str) -> str:
+            return bytes.fromhex(value).decode("utf-8")
+
+        try:
+            networks = tuple(
+                NetworkRow(int(r[0]), decode(r[1]), decode(r[2]))
+                for r in rows(prefix + "site", "id,HEX(domain),HEX(path)")
+            )
+            blogs = []
+            for row in rows(prefix + "blogs", "blog_id,site_id,HEX(domain),HEX(path)"):
+                blog_id = int(row[0])
+                require(blog_id > 0, "blog_id inválido")
+                table = prefix + ("" if blog_id == 1 else f"{blog_id}_") + "options"
+                require(table in tables, "tabela options ausente")
+                options = self._query(
+                    endpoint_id,
+                    f"SELECT option_name,HEX(option_value) FROM `{table}` "  # noqa: S608
+                    "WHERE option_name IN ('home','siteurl')",
+                    database,
+                ).splitlines()
+                values = [line.split("\t") for line in options]
+                require(
+                    len(values) == 2 and {v[0] for v in values} == {"home", "siteurl"},
+                    "home/siteurl ausentes ou duplicados",
+                )
+                urls = {v[0]: decode(v[1]) for v in values}
+                blogs.append(
+                    BlogRow(
+                        blog_id,
+                        int(row[1]),
+                        decode(row[2]),
+                        decode(row[3]),
+                        urls["home"],
+                        urls["siteurl"],
+                    )
+                )
+            return NetworkSnapshot(
+                tuple(sorted(networks, key=lambda n: n.id)),
+                tuple(sorted(blogs, key=lambda b: b.blog_id)),
+            )
+        except (ValueError, IndexError, UnicodeError) as exc:
+            raise InfrastructureError("Multisite: resultado SQL inválido") from exc
+
+    def apply_network(
+        self,
+        endpoint_id: str,
+        database: str,
+        prefix: str,
+        before: NetworkSnapshot,
+        after: NetworkSnapshot,
+        run_id: str,
+    ) -> None:
+        if self.get_database(endpoint_id).environment is not Environment.TEST:
+            raise UnsafeOperationError("Correção Multisite proibida fora de TESTE")
+        current = self.inspect_network(endpoint_id, database, prefix)
+        require(
+            len(current.networks) == len(before.networks) == len(after.networks)
+            and len(current.blogs) == len(before.blogs) == len(after.blogs),
+            "topologia mudou desde o planejamento",
+        )
+        statements = []
+
+        def update(
+            table: str, key: str, identity: int | str, column: str, actual: str, old: str, new: str
+        ) -> None:
+            require(actual in {old, new}, "valor diverge do plano persistido")
+            if actual == new:
+                return
+            literal = self._binary_literal
+            identity_sql = (
+                str(identity) if isinstance(identity, int) else literal(identity.encode())
+            )
+            statements.append(
+                f"UPDATE `{table}` SET `{column}`={literal(new.encode())} "  # noqa: S608
+                f"WHERE `{key}`={identity_sql} AND BINARY `{column}`={literal(old.encode())}"
+            )
+
+        for actual, old, new in zip(current.networks, before.networks, after.networks, strict=True):
+            require(
+                actual.id == old.id == new.id and actual.path == old.path == new.path,
+                "ID/path da rede mudou",
+            )
+            update(prefix + "site", "id", old.id, "domain", actual.domain, old.domain, new.domain)
+        for actual_blog, old_blog, new_blog in zip(
+            current.blogs, before.blogs, after.blogs, strict=True
+        ):
+            require(
+                actual_blog.blog_id == old_blog.blog_id == new_blog.blog_id
+                and actual_blog.site_id == old_blog.site_id == new_blog.site_id
+                and actual_blog.path == old_blog.path == new_blog.path,
+                "ID/relação/path de blog mudou",
+            )
+            update(
+                prefix + "blogs",
+                "blog_id",
+                old_blog.blog_id,
+                "domain",
+                actual_blog.domain,
+                old_blog.domain,
+                new_blog.domain,
+            )
+            table = prefix + ("" if old_blog.blog_id == 1 else f"{old_blog.blog_id}_") + "options"
+            for option in ("home", "siteurl"):
+                update(
+                    table,
+                    "option_name",
+                    option,
+                    "option_value",
+                    getattr(actual_blog, option),
+                    getattr(old_blog, option),
+                    getattr(new_blog, option),
+                )
+        if statements:
+            # Exact plain URLs only. Serialized content remains with WP-CLI.
+            self._execute_script(endpoint_id, database, ";".join(statements) + ";", run_id)
+        require(
+            self.inspect_network(endpoint_id, database, prefix) == after,
+            "validação SQL final divergente",
+        )
 
     def snapshot_widgets(self, endpoint_id: str, database: str) -> WidgetSnapshot:
         tables = [
