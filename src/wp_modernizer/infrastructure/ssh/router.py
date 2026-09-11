@@ -3,7 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Sequence, cast
 
-from wp_modernizer.application.ports import FileTransferPort, SourceInspectionPort
+from wp_modernizer.application.ports import (
+    FileTransferPort,
+    SourceInspectionPort,
+    WordPressVersionPort,
+)
 from wp_modernizer.config.models import ServerConfig
 from wp_modernizer.domain.errors import ConfigurationError
 from wp_modernizer.domain.models import SourceDatabaseConfiguration
@@ -49,3 +53,8 @@ class FileTransferRouter:
         server = self.get_server(server_id)
         transport = self._transports[server.authentication]
         return cast(SourceInspectionPort, transport).inspect_config(server_id, path, run_id)
+
+    def inspect_version(self, server_id: str, path: Path, run_id: str) -> str:
+        server = self.get_server(server_id)
+        transport = self._transports[server.authentication]
+        return cast(WordPressVersionPort, transport).inspect_version(server_id, path, run_id)

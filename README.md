@@ -6,6 +6,34 @@ da execução em caso de falha.
 
 > **Este projeto nunca implanta em PRODUÇÃO.**
 
+## Política de modernização WordPress
+
+O modernizer usa uma política declarativa e auditável para impedir saltos indevidos entre versões:
+
+| Classe | Versão detectada | Comportamento |
+|---|---|---|
+| `ANCIENT` | anterior a 4.9 | bloqueia automação e orienta uma ponte manual até 4.9 |
+| `LEGACY` | 4.9 a 6.8, inclusive | executa somente checkpoints posteriores à versão atual |
+| `CURRENT` | posterior a 6.8 | segue diretamente ao WordPress `latest` aprovado |
+
+A revisão inicial passa por WordPress 5.3 com PHP 7.4, WordPress 6.2 com PHP 7.4 e WordPress 6.8
+com um PHP compatível a partir de 8.1; depois continua até `latest` usando o runtime `current`.
+PHP 7.4 é transitório e está EOL. Instale-o por uma fonte aprovada e remova-o ao terminar todas as
+modernizações, se nenhuma outra aplicação depender dele.
+
+Os runtimes coexistem e são selecionados por caminho absoluto. O WP-CLI é chamado como
+`/usr/bin/php7.4 /usr/local/bin/wp ...` ou equivalente. O modernizer nunca troca o PHP global,
+instala pacotes, executa `sudo`, adiciona repositórios ou modifica FPM/Apache/Nginx. `plan` apenas
+inspeciona os binários com `-v` e, quando seguro, mostra sugestões informativas.
+
+Versões anteriores a 4.9 têm rotas descritas pela documentação oficial, inclusive pontes com PHP
+5.6/7.2 e migração de conteúdo para versões muito antigas. Elas ainda não são automatizadas nesta
+versão porque envolvem runtimes, temas e plugins adicionais. Após concluir manualmente a ponte
+até 4.9 em ambiente compatível, execute `inventory`, `diagnose` e `plan` novamente.
+
+Referências funcionais: [guia oficial de atualização](https://developer.wordpress.org/advanced-administration/upgrade/upgrading/)
+e [matriz oficial PHP/WordPress](https://make.wordpress.org/core/handbook/references/php-compatibility-and-wordpress-versions/).
+
 ## Visão geral
 
 ![Fluxo operacional do WordPress Modernizer](docs/images/wordpress-modernizer-flow.png)
@@ -79,7 +107,7 @@ Para execuções reais, o servidor operacional/de TESTE precisa disponibilizar a
 * cliente MySQL;
 * acesso aos bancos de TESTE;
 * SSH/rsync para autenticação por chave; ou
-* SSH/SFTP via Paramiko para autenticação por senha;
+* SSH/tar via Paramiko para autenticação por senha;
 * acesso de leitura à instalação WordPress de origem;
 * acesso de escrita à instalação de TESTE;
 * diretório persistente e gravável para o estado do modernizer.
@@ -742,7 +770,9 @@ Cada servidor escolhe explicitamente seu método de autenticação.
 authentication: password
 ```
 
-Utiliza SSH/SFTP através do Paramiko.
+Utiliza um stream de GNU tar por SSH através do Paramiko para copiar árvores,
+preservando inclusive nomes Unix com bytes inválidos em UTF-8. Requer GNU tar na origem.
+SFTP continua sendo usado somente para ler `wp-config.php`.
 
 Usuário e senha são obtidos somente no momento da conexão.
 
@@ -1043,4 +1073,3 @@ Resume valida o estado antes de continuar.
 ## Licença
 
 A seleção da licença do projeto ainda depende de aprovação organizacional.
-

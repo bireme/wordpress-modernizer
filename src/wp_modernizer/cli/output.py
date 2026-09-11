@@ -199,3 +199,74 @@ def _short_reason(reason: str, limit: int = 180) -> str:
 
 def _operation_label(operation: str) -> str:
     return {"migrate": "Migration"}.get(operation, operation.title())
+
+
+def emit_plan(payload: dict[str, object]) -> None:
+    import shlex
+
+    routes = payload.get("modernization", {})
+    if not isinstance(routes, dict):
+        return
+    for installation, route in routes.items():
+        click.echo(f"Installation: {installation}")
+        click.echo(f"Modernization class: {route['modernization_class']}")
+        click.echo(f"Current WordPress: {route['initial_wordpress']}")
+        click.echo(f"Policy: {route['policy_id']} revision {route['policy_revision']}")
+        if route.get("runtimes"):
+            click.echo("Configured PHP runtimes:")
+            for runtime in route["runtimes"]:
+                status = "installed" if runtime["installed"] else "missing/incompatible"
+                click.echo(
+                    f"  {runtime['name']}: {runtime['binary']} - {status} "
+                    f"({runtime.get('detected_version') or 'not detected'})"
+                )
+        initial_php = route.get("initial_php")
+        stages = route.get("stages", [])
+        if initial_php and stages and initial_php != stages[0]["php"]:
+            initial_runtime = initial_php.get("runtime")
+            click.echo("Compatibility preflight:")
+            click.echo(
+                "  PHP runtime: "
+                + (initial_runtime["binary"] if initial_runtime else "not configured")
+            )
+            click.echo(
+                "  Status: "
+                + ("available" if initial_php["satisfies_requirement"] else "missing/incompatible")
+            )
+        if route.get("reason_code"):
+            click.echo(f"BLOCKED: {route['reason_code']}")
+        if route.get("manual_target_wordpress"):
+            click.echo(
+                f"Automatic modernization starts at WordPress {route['manual_target_wordpress']}."
+            )
+            click.echo(
+                "Use a compatible legacy environment for a manual bridge; "
+                "run inventory/diagnose/plan again."
+            )
+        click.echo("Upgrade route:")
+        for index, stage in enumerate(route["stages"], 1):
+            selection = stage["php"]
+            requirement = selection["requirement"]
+            runtime = selection.get("runtime")
+            required = (
+                "current"
+                if requirement["current"]
+                else requirement["exact"] or f">= {requirement['minimum']}"
+            )
+            if requirement.get("maximum"):
+                required += f" (compatible through {requirement['maximum']}.x)"
+            click.echo(f"  {index}. WordPress {stage['target']} ({stage['wordpress']})")
+            click.echo(f"     PHP: {required}")
+            click.echo(f"     Runtime: {runtime['binary'] if runtime else 'not configured'}")
+            status = "available" if selection["satisfies_requirement"] else "missing/incompatible"
+            detected = runtime.get("detected_version") if runtime else None
+            click.echo(f"     Status: {status} (detected: {detected or 'unknown'})")
+    suggestions = payload.get("provisioning_suggestions", [])
+    if isinstance(suggestions, list):
+        for suggestion in suggestions:
+            click.echo(f"Missing PHP runtime: {suggestion['runtime']}")
+            click.echo(suggestion["guidance"])
+            for key in ("install", "verify", "remove"):
+                if suggestion[key]:
+                    click.echo(f"  {key.title()}: {shlex.join(suggestion[key])}")
+    click.echo("Execution readiness: " + ("READY" if payload.get("execution_ready") else "BLOCKED"))

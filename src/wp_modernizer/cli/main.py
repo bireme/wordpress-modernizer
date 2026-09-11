@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 import click
 
+from wp_modernizer.application.modernization import ModernizationPlanning
 from wp_modernizer.application.ports import CommandRunner, ExecutableLocator, SecretProvider
 from wp_modernizer.application.service import ModernizerService
 from wp_modernizer.config.loader import load_config
@@ -20,6 +21,12 @@ from wp_modernizer.domain.path_parser import InstallationPathParser
 from wp_modernizer.infrastructure.command import SubprocessCommandRunner
 from wp_modernizer.infrastructure.filesystem import LocalFileSystem
 from wp_modernizer.infrastructure.managed_plugins import ManagedPluginRefresher
+from wp_modernizer.infrastructure.modernization import (
+    ConfiguredTargetResolver,
+    LinuxProvisioningAdvice,
+    LocalWordPressVersionInspector,
+    PhpRuntimeDiscovery,
+)
 from wp_modernizer.infrastructure.mysql.adapter import MySQLAdapter
 from wp_modernizer.infrastructure.runtime_operations import RuntimeOperations
 from wp_modernizer.infrastructure.secrets import EnvironmentSecretProvider
@@ -68,7 +75,8 @@ def build_service(
     )
     ssh = FileTransferRouter(config.servers, key_transport, password_transport)
     mysql = MySQLAdapter(config.databases, secret_provider, command_runner)
-    wpcli = WPCLIAdapter(command_runner)
+    wpcli = WPCLIAdapter(command_runner, str(config.wpcli_binary))
+    runtime_discovery = PhpRuntimeDiscovery(command_runner)
     config_writer = WordPressConfigWriter()
     database_endpoints = {
         installation.effective_destination_path: tuple(
@@ -88,12 +96,14 @@ def build_service(
         source_inspection=ssh,
         filesystem=filesystem,
         config_writer=config_writer,
+        runtime_discovery=runtime_discovery,
     )
     return ModernizerService(
         config,
         CapabilityProbe(
             command_runner,
             filesystem,
+            wp_bin=str(config.wpcli_binary),
             database=mysql,
             wordpress=wpcli,
             database_endpoints=database_endpoints,
@@ -104,6 +114,14 @@ def build_service(
         SystemClock(),
         UUIDGenerator(),
         operations,
+        modernization=ModernizationPlanning(
+            config,
+            ssh,
+            LocalWordPressVersionInspector(filesystem),
+            runtime_discovery,
+            ConfiguredTargetResolver(config.latest_wordpress),
+            LinuxProvisioningAdvice(command_runner, filesystem),
+        ),
     )
 
 
@@ -176,7 +194,13 @@ def _read_command(operation: Operation) -> Any:
     def command(context: Context, installation_id: str, as_json: bool) -> None:
         try:
             method = getattr(context.service, operation.value)
-            _emit(method(installation_id), as_json)
+            payload = method(installation_id)
+            if operation is Operation.PLAN and not as_json:
+                from wp_modernizer.cli.output import emit_plan
+
+                emit_plan(_serialize(payload))
+            else:
+                _emit(payload, as_json)
         except ModernizerError as exc:
             raise click.ClickException(str(exc)) from exc
 

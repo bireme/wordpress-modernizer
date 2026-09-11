@@ -33,10 +33,23 @@ def test_path_is_preserved_without_contaminating_hostname(
     )
 
 
-@pytest.mark.parametrize("url", ["not-a-url", "http://boletin.bireme.org", "https:///missing"])
-def test_rejects_invalid_or_non_https_url(policy: OrganizationalTestUrlPolicy, url: str) -> None:
+@pytest.mark.parametrize("url", ["not-a-url", "https:///missing"])
+def test_rejects_invalid_url(policy: OrganizationalTestUrlPolicy, url: str) -> None:
     with pytest.raises(ConfigurationError):
         policy.resolve(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://boletin.bireme.org",
+        "https://boletin.bireme.org",
+    ],
+)
+def test_accepts_http_and_https_production_urls(
+    policy: OrganizationalTestUrlPolicy, url: str
+) -> None:
+    assert policy.resolve(url)
 
 
 def test_rejects_hostname_outside_explicit_organizational_boundary(

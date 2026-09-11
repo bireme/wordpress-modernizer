@@ -25,7 +25,9 @@ class LocalFileSystem:
             for name in sorted(files):
                 item = Path(root) / name
                 stat = item.stat()
-                digest.update(str(item.relative_to(path)).encode())
+                digest.update(
+                    item.relative_to(path).as_posix().encode("utf-8", errors="surrogateescape")
+                )
                 digest.update(str(stat.st_size).encode())
                 digest.update(str(stat.st_mtime_ns).encode())
         return digest.hexdigest()

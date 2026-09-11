@@ -2,9 +2,15 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Dict, Iterable, Set
+from typing import Any, Dict, Iterable, Set, cast
 
-from wp_modernizer.application.ports import CapabilityProbePort, Clock, FileSystem, StateStore
+from wp_modernizer.application.ports import (
+    CapabilityProbePort,
+    Clock,
+    FileSystem,
+    RoutedCapabilityProbePort,
+    StateStore,
+)
 from wp_modernizer.domain.enums import (
     Capability,
     HealthStatus,
@@ -16,7 +22,7 @@ from wp_modernizer.domain.errors import MissingCapabilityError, ResumeConsistenc
 from wp_modernizer.domain.models import CapabilityReport, RunManifest, StepResult
 
 from .progress import NullProgressReporter, ProgressReporter
-from .steps import Step
+from .steps import OperationStep, Step
 
 
 class PipelineRunner:
@@ -48,10 +54,11 @@ class PipelineRunner:
         total_steps = len(ordered_steps)
         progress.run_started(manifest, total_steps)
         requirements = required_capabilities
+        initial_probe = self._step_probe(ordered_steps[0]) if ordered_steps else self._probe
         before = (
-            self._probe.probe(installation_path, requirements)
+            initial_probe.probe(installation_path, requirements)
             if requirements is not None
-            else self._probe.probe(installation_path)
+            else initial_probe.probe(installation_path)
         )
         progress.capabilities_checked("before", before)
         missing_external = tuple(
@@ -75,7 +82,22 @@ class PipelineRunner:
                     manifest, step, context, before
                 )
             except Exception as exc:
+                # Existing progress consumers observe the failure while the run is still
+                # active. Persist the fail-and-preserve state immediately afterwards.
                 progress.run_failed(manifest, str(exc))
+                result = StepResult(
+                    step.name,
+                    StepStatus.FAILED,
+                    False,
+                    str(exc),
+                    installation_id=step.installation_id,
+                )
+                manifest.steps.append(result)
+                manifest.failed_step = step.name
+                manifest.status = RunStatus.UPDATE_FAILED_PRESERVED
+                manifest.finished_at = self._clock.now_iso()
+                manifest.filesystem_fingerprint = self._filesystem.fingerprint(installation_path)
+                self._state.save_manifest(manifest)
                 raise
             manifest.steps.append(result)
             if not requires_post_step_probe:
@@ -84,11 +106,32 @@ class PipelineRunner:
             # This post-step probe is also the final validation when ``step`` is the
             # last executable step.  Keep it here instead of representing that same
             # probe as a separate, no-op health-check step in plans and manifests.
-            after = (
-                self._probe.probe(installation_path, requirements)
-                if requirements is not None
-                else self._probe.probe(installation_path)
+            active_probe = self._step_probe(step)
+            node = context.get("installations", {}).get(step.installation_id)
+            probe_path = node.effective_destination_path if node is not None else installation_path
+            # A just-copied wp-config may still reference PRODUCTION. Never bootstrap it
+            # until the test database configuration has been written.
+            probe_requirements = (
+                set()
+                if step.name in {"copy_files", "snapshot_source_database", "copy_database"}
+                else requirements
             )
+            try:
+                after = (
+                    active_probe.probe(probe_path, probe_requirements)
+                    if probe_requirements is not None
+                    else active_probe.probe(probe_path)
+                )
+            except Exception:
+                after = before
+                result = replace(
+                    result,
+                    status=StepStatus.FAILED,
+                    message="Checkpoint diagnostic failed; TEST preserved",
+                )
+                manifest.steps[-1] = result
+            if probe_requirements == set():
+                after = before
             manifest.health_after = after.health
             self._record_diagnostics(manifest, after)
             progress.capabilities_checked("after_step", after)
@@ -101,6 +144,8 @@ class PipelineRunner:
             regressed = self._regressed(before.health, after.health)
             allowed_transient_health = regressed and after.health in step.allowed_health_regressions
             if result.status is not expected_status or (regressed and not allowed_transient_health):
+                result = replace(result, status=StepStatus.FAILED)
+                manifest.steps[-1] = result
                 manifest.failed_step = step.name
                 manifest.status = RunStatus.UPDATE_FAILED_PRESERVED
                 manifest.finished_at = self._clock.now_iso()
@@ -123,6 +168,13 @@ class PipelineRunner:
         self._state.save_manifest(manifest)
         progress.run_finished(manifest)
         return manifest
+
+    def _step_probe(self, step: Step) -> CapabilityProbePort:
+        if isinstance(step, OperationStep) and step.planned_step.php is not None:
+            runtime = step.planned_step.php.runtime
+            if runtime is not None:
+                return cast(RoutedCapabilityProbePort, self._probe).with_runtime(runtime.binary)
+        return self._probe
 
     @staticmethod
     def _execute_step(

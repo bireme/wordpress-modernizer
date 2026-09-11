@@ -1,6 +1,7 @@
 import io
 import socket
 import stat
+import tarfile
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any
@@ -114,6 +115,46 @@ class FakeSFTP:
         self.closed = True
 
 
+class FakeTarChannel:
+    def __init__(self, payload: bytes, status: int = 0) -> None:
+        self.payload = io.BytesIO(payload)
+        self.status = status
+        self.closed = False
+        self.command = b""
+        self.stderr = b""
+        self.error = None
+
+    def settimeout(self, timeout):
+        self.timeout = timeout
+
+    def exec_command(self, command):
+        self.command = command
+
+    def shutdown_write(self):
+        pass
+
+    def recv(self, size):
+        if self.error:
+            raise self.error
+        return self.payload.read(size)
+
+    def recv_stderr_ready(self):
+        return bool(self.stderr)
+
+    def recv_stderr(self, size):
+        result, self.stderr = self.stderr[:size], self.stderr[size:]
+        return result
+
+    def exit_status_ready(self):
+        return True
+
+    def recv_exit_status(self):
+        return self.status
+
+    def close(self):
+        self.closed = True
+
+
 class FakeSSHClient:
     def __init__(self, *, connect_error: Exception | None = None) -> None:
         self.connect_error = connect_error
@@ -141,6 +182,27 @@ class FakeSSHClient:
         self.connect_kwargs = kwargs
         if self.connect_error is not None:
             raise self.connect_error
+
+    def get_transport(self):
+        return self
+
+    def open_session(self, timeout):
+        if not hasattr(self, "channel"):
+            payload = io.BytesIO()
+            with tarfile.open(fileobj=payload, mode="w", format=tarfile.GNU_FORMAT) as archive:
+                for path, attributes in self.sftp.nodes.items():
+                    member = tarfile.TarInfo(path.lstrip("/"))
+                    member.mode = attributes.st_mode & 0o777
+                    member.mtime = attributes.st_mtime
+                    if stat.S_ISDIR(attributes.st_mode):
+                        member.type = tarfile.DIRTYPE
+                        archive.addfile(member)
+                    else:
+                        data = self.sftp.files[path]
+                        member.size = len(data)
+                        archive.addfile(member, io.BytesIO(data))
+            self.channel = FakeTarChannel(payload.getvalue())
+        return self.channel
 
     def open_sftp(self) -> FakeSFTP:
         return self.sftp
@@ -614,7 +676,7 @@ def test_password_sftp_reports_transfer_failure(tmp_path: Path) -> None:
     adapter = PasswordSFTPAdapter(
         {"s": password_server()}, Secrets(), client_factory=lambda: client
     )
-    with pytest.raises(TransferError, match="transferência SFTP"):
+    with pytest.raises(TransferError, match="transferência SSH/tar"):
         adapter.copy_from("s", Path("/source"), tmp_path, [], "run-1")
 
 
@@ -668,6 +730,19 @@ def test_key_ssh_reads_remote_config_without_wpcli_or_credentials_in_argv() -> N
     assert "user" not in " ".join(runner.calls[0])
 
 
+def test_key_ssh_detects_wordpress_version_by_reading_only_version_file() -> None:
+    key = password_server().model_copy(update={"authentication": "key", "password_secret": None})
+    runner = FakeCommandRunner([FakeCommandResult(stdout="<?php\n$wp_version = '4.9.26';\n")])
+    adapter = RSyncSSHAdapter({"source": key}, Secrets(), runner)
+
+    value = adapter.inspect_version("source", Path("/source/htdocs"), "run-1")
+
+    assert value == "4.9.26"
+    assert "cat -- /source/htdocs/wp-includes/version.php" in runner.calls[0][-1]
+    assert runner.calls[0][-1].startswith("cat -- ")
+    assert "wp " not in runner.calls[0][-1]
+
+
 def test_password_sftp_reads_remote_config_via_verified_session() -> None:
     client = FakeSSHClient()
     adapter = PasswordSFTPAdapter(
@@ -681,6 +756,17 @@ def test_password_sftp_reads_remote_config_via_verified_session() -> None:
     assert client.connect_kwargs["password"] == "password"
     assert client.exec_calls == []
     assert client.sftp.closed
+
+
+def test_password_sftp_detects_wordpress_version_without_remote_execution() -> None:
+    client = FakeSSHClient()
+    client.sftp.files["/source/htdocs/wp-includes/version.php"] = b"<?php\n$wp_version = '6.8.3';\n"
+    adapter = PasswordSFTPAdapter(
+        {"source": password_server()}, Secrets(), client_factory=lambda: client
+    )
+
+    assert adapter.inspect_version("source", Path("/source/htdocs"), "run-1") == "6.8.3"
+    assert client.exec_calls == []
 
 
 def test_local_filesystem_fingerprint_changes_and_remove(tmp_path: Path) -> None:

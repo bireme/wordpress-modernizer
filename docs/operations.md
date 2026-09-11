@@ -1,5 +1,34 @@
 # Operações
 
+## Rota de modernização WordPress
+
+`plan` classifica cada instalação pela versão lida de `wp-includes/version.php`:
+
+- `ANCIENT`: WordPress anterior a 4.9. A automação é bloqueada antes de qualquer mutação e o plano
+  informa `manual_target_wordpress: "4.9"` e
+  `reason_code: ANCIENT_WORDPRESS_REQUIRES_MANUAL_BRIDGE`;
+- `LEGACY`: WordPress 4.9 a 6.8, inclusive;
+- `CURRENT`: WordPress posterior a 6.8 e sem checkpoint legacy pendente.
+
+A política `wordpress-official-legacy-2026-09`, revisão 1, calcula apenas destinos posteriores à
+versão detectada: 5.3/PHP 7.4, 6.2/PHP 7.4, 6.8/PHP compatível a partir de 8.1 e, por fim,
+`latest` com o runtime `current`. Cada checkpoint atualiza o Core para a versão exata, executa
+`core update-db`, verifica a versão e checksums, valida bootstrap reduzido e somente então grava o
+checkpoint. Uma falha interrompe a rota e preserva a cópia de TESTE.
+
+Se a instalação já está em 6.8 e `current` ainda não é compatível com essa versão, o plano mantém
+somente `latest` como destino, mas faz o preflight com um runtime moderno compatível configurado.
+Depois da atualização, a validação final ocorre sob `current`.
+
+PHP 7.4 está EOL e é usado apenas como runtime transitório. Os comandos WP-CLI sempre começam com
+o caminho PHP decidido no plano; nenhuma etapa chama `update-alternatives`, modifica FPM/servidor
+web ou instala pacotes. `plan` pode exibir comandos administrativos como orientação, mas nunca os
+executa. A orientação APT só é específica quando Debian/Ubuntu é detectado e `apt-cache policy`
+confirma um candidato no repositório já configurado.
+
+A rota segue o [guia oficial de atualização do WordPress](https://developer.wordpress.org/advanced-administration/upgrade/upgrading/)
+e a [matriz oficial de compatibilidade PHP](https://make.wordpress.org/core/handbook/references/php-compatibility-and-wordpress-versions/).
+
 - `inventory` coleta campos independentes e marca valores indisponíveis em vez de interromper.
 - `diagnose` informa capacidades tipadas e integridade.
 - `plan` apresenta exclusões de cópia entre pai/filho, estado da resolução do banco de dados,
@@ -42,7 +71,7 @@ não prova espaço livre para o backup, conclusão de uma cópia grande ou suces
 da importação.
 
 O adaptador público de execução delega cópias à porta de transporte remoto. Um roteador usa
-SSH/rsync para autenticação por chave e SSH/SFTP (Paramiko) para autenticação por senha. A
+SSH/rsync para autenticação por chave e SSH/tar (Paramiko) para cópia por senha, com SFTP para ler `wp-config.php`. A
 inspeção da origem reutiliza esses transportes apenas para leitura do arquivo permitido; descoberta
 e transferência de bancos são delegadas ao MySQL e operações WordPress locais/de TESTE ao WP-CLI. Uma
 migração de banco descobre a conexão de origem pelo arquivo remoto e usa apenas endpoints de
