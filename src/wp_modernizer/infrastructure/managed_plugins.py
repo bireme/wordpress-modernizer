@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Sequence
+from urllib.parse import urlsplit
 
 from wp_modernizer.application.ports import CommandRunner, FileSystem
 from wp_modernizer.domain.enums import Environment, ManagedPluginStatus
@@ -14,7 +15,7 @@ from wp_modernizer.domain.models import (
 
 
 class ManagedPluginRefresher:
-    """Substitui checkouts locais de plugins sem operar fora de ``wp-content/plugins``."""
+    """Atualiza plugins preservando conteúdo dentro de ``wp-content/plugins``."""
 
     def __init__(self, filesystem: FileSystem, runner: CommandRunner) -> None:
         self._filesystem = filesystem
@@ -45,11 +46,18 @@ class ManagedPluginRefresher:
     def _refresh_one(
         self, plugins_root: Path, plugin: ManagedPlugin, run_id: str
     ) -> ManagedPluginResult:
-        if plugin.strategy != "replace_from_git":
+        if plugin.strategy not in {"replace_from_git", "update_from_git"}:
             raise UnsafeOperationError(f"strategy não suportada para {plugin.slug}")
         target = plugins_root / plugin.slug
         self._validate_direct_child(target, plugins_root, plugin.slug)
 
+        if plugin.strategy == "update_from_git" and self._filesystem.exists(target):
+            return self._update_existing(target, plugin, run_id)
+        return self._replace_from_git(plugins_root, target, plugin, run_id)
+
+    def _replace_from_git(
+        self, plugins_root: Path, target: Path, plugin: ManagedPlugin, run_id: str
+    ) -> ManagedPluginResult:
         try:
             dirty_reason = self._dirty_reason(target, run_id)
         except (InfrastructureError, OSError):
@@ -120,6 +128,171 @@ class ManagedPluginRefresher:
             if self._filesystem.exists(staging):
                 self._validate_direct_child(staging, plugins_root)
                 self._filesystem.remove_tree(staging)
+
+    def _git(self, target: Path, run_id: str, *arguments: str) -> str:
+        result = self._runner.run(
+            ("git", "-c", "merge.autoStash=false", *arguments),
+            cwd=target,
+            timeout=300,
+            correlation_id=run_id,
+        )
+        if result.return_code != 0:
+            raise InfrastructureError(f"git {arguments[0]} falhou")
+        return result.stdout.strip()
+
+    @staticmethod
+    def _remote_identity(repository: str) -> str:
+        value = repository.rstrip("/")
+        if value.startswith("git@") and ":" in value:
+            host, path = value[4:].split(":", 1)
+            return f"{host.lower()}/{path.removesuffix('.git')}"
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme in {"https", "ssh"}
+            and parsed.hostname
+            and not parsed.query
+            and not parsed.fragment
+            and (parsed.scheme != "ssh" or parsed.username in {None, "git"})
+        ):
+            port = f":{parsed.port}" if parsed.port else ""
+            path = parsed.path.removeprefix("/").removesuffix(".git")
+            return f"{parsed.hostname.lower()}{port}/{path}"
+        return value
+
+    def _inspect_checkout(self, target: Path, plugin: ManagedPlugin, run_id: str) -> None:
+        metadata = target / ".git"
+        root = self._git(target, run_id, "rev-parse", "--show-toplevel")
+        git_dir = self._git(target, run_id, "rev-parse", "--absolute-git-dir")
+        common = self._git(target, run_id, "rev-parse", "--git-common-dir")
+        if (
+            Path(root).resolve() != target.resolve()
+            or Path(git_dir).resolve() != metadata.resolve()
+            or (target / common).resolve() != metadata.resolve()
+        ):
+            raise InfrastructureError("checkout ou metadados Git fora do plugin autorizado")
+        remote = self._git(target, run_id, "remote", "get-url", "--all", "origin")
+        if len(remote.splitlines()) != 1 or self._remote_identity(remote) != self._remote_identity(
+            plugin.repository
+        ):
+            raise InfrastructureError("remote origin incompatível com repository configurado")
+        self._git(target, run_id, "check-ref-format", f"refs/heads/{plugin.branch}")
+        branch = self._git(target, run_id, "symbolic-ref", "--short", "HEAD")
+        if branch != plugin.branch:
+            raise InfrastructureError("branch atual diferente da configurada")
+        for state in (
+            "MERGE_HEAD",
+            "CHERRY_PICK_HEAD",
+            "REVERT_HEAD",
+            "rebase-merge",
+            "rebase-apply",
+        ):
+            if (metadata / state).exists():
+                raise InfrastructureError("operação Git pendente; recuperação manual necessária")
+
+    def _update_existing(
+        self, target: Path, plugin: ManagedPlugin, run_id: str
+    ) -> ManagedPluginResult:
+        stash: str | None = None
+        before: str | None = None
+        revision: str | None = None
+        phase = "inspeção"
+        try:
+            metadata = target / ".git"
+            if metadata.is_symlink():
+                raise InfrastructureError("metadados Git são um link simbólico")
+            valid = metadata.is_dir()
+            if valid:
+                try:
+                    self._git(target, run_id, "rev-parse", "--verify", "HEAD")
+                except InfrastructureError:
+                    valid = False
+            if not valid:
+                # Replacement also refuses unverifiable existing content. Never let Git
+                # discover a parent repo and mistake this directory for a clean checkout.
+                return self._result(
+                    plugin,
+                    ManagedPluginStatus.SKIPPED
+                    if plugin.dirty_policy == "skip"
+                    else ManagedPluginStatus.FAILED_PRESERVED,
+                    False,
+                    "diretório existente não é um checkout Git verificável; conteúdo preservado",
+                )
+            self._inspect_checkout(target, plugin, run_id)
+            before = self._revision(target, run_id)
+            dirty = self._git(target, run_id, "status", "--porcelain", "--untracked-files=all")
+            if dirty and plugin.dirty_policy != "stash":
+                return self._result(
+                    plugin,
+                    ManagedPluginStatus.SKIPPED
+                    if plugin.dirty_policy == "skip"
+                    else ManagedPluginStatus.FAILED_PRESERVED,
+                    False,
+                    f"{plugin.dirty_policy}: plugin preservado porque {dirty}",
+                    before,
+                )
+            if dirty:
+                phase = "criação do stash (consulte refs/stash para recuperação)"
+                self._git(
+                    target,
+                    run_id,
+                    "stash",
+                    "push",
+                    "--include-untracked",
+                    "-m",
+                    f"wp-modernizer {run_id}",
+                )
+                stash = self._git(target, run_id, "rev-parse", "--verify", "refs/stash")
+                if not stash or self._dirty_reason(target, run_id):
+                    raise InfrastructureError("working tree não ficou limpo após stash")
+            phase = "atualização remota"
+            # Explicit mapping prevents a configured fetch refspec selecting another branch.
+            self._git(
+                target,
+                run_id,
+                "fetch",
+                "--no-tags",
+                "--refmap=",
+                "origin",
+                f"+refs/heads/{plugin.branch}:refs/remotes/origin/{plugin.branch}",
+            )
+            self._git(
+                target,
+                run_id,
+                "merge",
+                "--ff-only",
+                "--no-overwrite-ignore",
+                f"refs/remotes/origin/{plugin.branch}",
+            )
+            revision = self._revision(target, run_id)
+            if stash:
+                phase = "conflito ou falha ao reaplicar modificações locais"
+                self._git(target, run_id, "stash", "apply", "--index", stash)
+            return self._result(
+                plugin,
+                ManagedPluginStatus.REFRESHED,
+                before != revision,
+                "checkout atualizado por fast-forward"
+                + (
+                    f"; modificações reaplicadas; stash {stash} mantido para recuperação"
+                    if stash
+                    else ""
+                ),
+                revision,
+            )
+        except (InfrastructureError, OSError, ValueError) as error:
+            return self._result(
+                plugin,
+                ManagedPluginStatus.FAILED_PRESERVED,
+                revision is not None and revision != before,
+                f"{phase}: {error}; checkout preservado"
+                + (
+                    f"; modificações locais preservadas no stash {stash}; "
+                    "recuperação manual necessária"
+                    if stash
+                    else ""
+                ),
+                revision or before,
+            )
 
     def _dirty_reason(self, target: Path, run_id: str) -> str | None:
         if not self._filesystem.exists(target):
