@@ -111,6 +111,7 @@ class WPCLIAdapter:
             timeout=900,
             correlation_id=run_id,
         )
-        if result.return_code != 0:
+        indexing_option = "blog_public" in arguments and "option" in arguments
+        if result.return_code != 0 or (indexing_option and result.stderr.strip()):
             raise WordPressUnavailableError(result.stderr)
         return result.stdout

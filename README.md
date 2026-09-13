@@ -1075,3 +1075,8 @@ Resume valida o estado antes de continuar.
 A seleção da licença do projeto ainda depende de aprovação organizacional.
 
 A normalização HTTPS interna da cópia de TESTE está descrita em [P1.2 — HTTPS](docs/test-https.md).
+
+As cópias de TESTE recebem `blog_public=0` após HTTPS, em single-site e em todos os
+blogs de multisite, com plano persistido, validação e resume idempotente.
+Essa opção desencoraja mecanismos de busca; não é bloqueio absoluto de crawlers.
+Veja [indexação em TESTE (P1.3)](docs/test-indexing.md).

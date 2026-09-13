@@ -273,6 +273,23 @@ class RuntimeOperations:
                 context.get("recovery_data", {}),
             )
 
+        if step_name in {"plan_test_indexing", "disable_test_indexing"}:
+            from wp_modernizer.application.test_indexing import TestIndexingOperations
+
+            require(self._config_writer is not None, "Indexação: writer ausente")
+            assert self._config_writer is not None
+            changes = TestIndexingOperations(
+                self._databases, self._wordpress, self._config_writer
+            ).execute(
+                step_name,
+                path,
+                context.get("recovery_data", {}).get(planned_step.installation_id, {}),
+                run_id,
+            )
+            return replace(
+                self._ok(step_name, changes > 0, "Indexação: plano/estado de TESTE validado"),
+                metrics={"sites_changed": float(changes)},
+            )
         if step_name in {"plan_test_https", "enforce_test_https"}:
             from wp_modernizer.application.test_https import TestHttpsOperations
 

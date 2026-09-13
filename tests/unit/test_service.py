@@ -114,7 +114,7 @@ def test_plan_includes_nested_child_and_pending_operation() -> None:
     plan = service().plan("parent")
     assert [item["installation_id"] for item in plan["installations"]] == ["parent", "child"]
     assert plan["pending_operations"][0]["operation_type"] == "SEARCH_REPLACE"
-    assert plan["steps"][-1]["name"] == "enforce_test_https"
+    assert plan["steps"][-1]["name"] == "disable_test_indexing"
 
 
 def test_two_installations_derive_independent_organizational_domains() -> None:
@@ -149,6 +149,13 @@ def test_pipeline_does_not_execute_pending_search_replace_twice() -> None:
         assert steps.count("pending_search_replace") == 1
         assert steps.count("plan_test_https") == steps.count("enforce_test_https") == 1
         assert steps.index("pending_search_replace") < steps.index("enforce_test_https")
+        assert steps.count("plan_test_indexing") == steps.count("disable_test_indexing") == 1
+        assert steps.index("enforce_test_https") < steps.index("plan_test_indexing")
+        assert steps.index("plan_test_indexing") < steps.index("disable_test_indexing")
+    names = [s.name for s in plan.planned_steps]
+    assert max(i for i, name in enumerate(names) if name == "disable_test_indexing") < names.index(
+        "snapshot"
+    )
 
 
 def test_pipeline_dry_run_calls_only_read_and_native_validation_operations() -> None:
