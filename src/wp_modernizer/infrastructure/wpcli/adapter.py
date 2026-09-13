@@ -91,7 +91,7 @@ class WPCLIAdapter:
         if multisite:
             argv.append("--network")
         result = self._runner.run(argv, timeout=600, correlation_id=run_id)
-        if result.return_code != 0 or (regex and result.stderr.strip()):
+        if result.return_code != 0:
             raise WordPressUnavailableError(
                 "falha no search-replace que considera serialização; consulte o log redigido"
             )

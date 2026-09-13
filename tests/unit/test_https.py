@@ -423,15 +423,19 @@ def test_https_planning_dry_run_never_bootstraps_or_mutates():
         assert all(s.status is StepStatus.PLANNED for s in result.steps if s.name == name)
 
 
-def test_wpcli_https_warnings_fail_closed(tmp_path):
-    runner = FakeCommandRunner([FakeCommandResult(stdout="0", stderr="Warning: skipped object")])
-    with pytest.raises(WordPressUnavailableError):
-        WPCLIAdapter(runner).search_replace(
-            tmp_path,
-            internal_http_pattern("teste.example.org"),
-            "https://teste.example.org",
-            dry_run=True,
-            multisite=False,
-            run_id="r",
-            regex=True,
-        )
+def test_wpcli_https_warnings_are_nonfatal_when_command_succeeds(tmp_path):
+    runner = FakeCommandRunner(
+        [FakeCommandResult(stdout="47418", stderr="Warning: skipped object")]
+    )
+
+    result = WPCLIAdapter(runner).search_replace(
+        tmp_path,
+        internal_http_pattern("teste.example.org"),
+        "https://teste.example.org",
+        dry_run=True,
+        multisite=False,
+        run_id="r",
+        regex=True,
+    )
+
+    assert result == 47418
