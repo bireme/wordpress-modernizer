@@ -128,6 +128,18 @@ class MigrationPlanner:
                         capability=StepCapability.MUTABLE_WITHOUT_SAFE_DRY_RUN,
                     )
                 )
+            for name in ("plan_test_indexing", "disable_test_indexing"):
+                steps.append(
+                    PlannedStep(
+                        name=name,
+                        mutable=True,
+                        idempotent=True,
+                        completion_probe="todos os blogs esperados têm blog_public=0",
+                        partial_recovery="reler opções usando plano HTTPS e valores persistidos",
+                        installation_id=node.installation_id,
+                        capability=StepCapability.MUTABLE_WITHOUT_SAFE_DRY_RUN,
+                    )
+                )
         return MigrationPlan(
             installation_id=installation_id,
             source_environment=source_environment,
