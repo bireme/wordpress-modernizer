@@ -89,7 +89,7 @@ class TerminalProgressReporter:
     def step_started(self, name: str, index: int, total: int) -> None:
         label = STEP_LABELS.get(name, name.replace("_", " ").capitalize())
         prefix = f"[{index}/{total}] {label} "
-        click.echo(prefix + "." * max(1, 44 - len(prefix)), nl=False)
+        click.echo(prefix + "." * max(1, 60 - len(prefix)), nl=False)
         self._step_open = True
 
     def step_finished(self, result: StepResult, index: int, total: int) -> None:
