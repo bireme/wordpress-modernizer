@@ -95,26 +95,39 @@ class MigrationPlanner:
                         ),
                     )
                 )
-        if any(
-            operation.operation_type is PendingOperationType.SEARCH_REPLACE
-            and not operation.completed
-            for operation in pending_operations
-        ):
-            steps.append(
-                PlannedStep(
-                    name="pending_search_replace",
-                    mutable=True,
-                    idempotent=True,
-                    completion_probe="a URL de origem não permanece no banco de TESTE",
-                    partial_recovery="preservar a cópia e repetir o search-replace com WP-CLI",
-                    installation_id=installation_id,
-                    capability=StepCapability.MUTABLE_WITH_NATIVE_DRY_RUN,
-                    dry_run_requirements=(
-                        Capability.WPCLI_REDUCED_BOOTSTRAP,
-                        Capability.DATABASE_AVAILABLE,
-                    ),
+        for node in nodes:
+            if any(
+                operation.operation_type is PendingOperationType.SEARCH_REPLACE
+                and not operation.completed
+                for operation in pending_operations
+            ):
+                steps.append(
+                    PlannedStep(
+                        name="pending_search_replace",
+                        mutable=True,
+                        idempotent=True,
+                        completion_probe="a URL de origem não permanece no banco de TESTE",
+                        partial_recovery="preservar a cópia e repetir o search-replace com WP-CLI",
+                        installation_id=node.installation_id,
+                        capability=StepCapability.MUTABLE_WITH_NATIVE_DRY_RUN,
+                        dry_run_requirements=(
+                            Capability.WPCLI_REDUCED_BOOTSTRAP,
+                            Capability.DATABASE_AVAILABLE,
+                        ),
+                    )
                 )
-            )
+            for name in ("plan_test_https", "enforce_test_https"):
+                steps.append(
+                    PlannedStep(
+                        name=name,
+                        mutable=True,
+                        idempotent=True,
+                        completion_probe="home/siteurl HTTPS e zero referências HTTP internas",
+                        partial_recovery="reler estados do plano HTTPS persistido",
+                        installation_id=node.installation_id,
+                        capability=StepCapability.MUTABLE_WITHOUT_SAFE_DRY_RUN,
+                    )
+                )
         return MigrationPlan(
             installation_id=installation_id,
             source_environment=source_environment,

@@ -52,11 +52,13 @@ def test_pending_search_replace_runs_after_test_database_is_prepared() -> None:
         (pending,),
     )
     names = [step.name for step in plan.steps]
-    assert names[-4:] == [
+    assert names[-6:] == [
         "write_test_db_config",
         "plan_multisite_domain",
         "correct_multisite_domain",
         "pending_search_replace",
+        "plan_test_https",
+        "enforce_test_https",
     ]
     capabilities = {step.name: step.capability for step in plan.steps}
     assert capabilities["snapshot_source_database"] is StepCapability.READ_ONLY

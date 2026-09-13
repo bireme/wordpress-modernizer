@@ -1073,3 +1073,5 @@ Resume valida o estado antes de continuar.
 ## Licença
 
 A seleção da licença do projeto ainda depende de aprovação organizacional.
+
+A normalização HTTPS interna da cópia de TESTE está descrita em [P1.2 — HTTPS](docs/test-https.md).

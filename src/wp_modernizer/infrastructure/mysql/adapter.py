@@ -182,6 +182,27 @@ class MySQLAdapter:
             )
         self._ensure_success(result.return_code, result.stderr)
 
+    def inspect_site_urls(self, endpoint_id: str, database: str, prefix: str) -> Mapping[str, str]:
+        require(
+            self.get_database(endpoint_id).environment is Environment.TEST,
+            "leitura HTTPS restrita a TESTE",
+        )
+        require(bool(re.fullmatch(r"[A-Za-z0-9_]{1,56}", prefix)), "prefixo inseguro")
+        output = self._query(
+            endpoint_id,
+            f"SELECT option_name,HEX(option_value) FROM `{prefix}options` "  # noqa: S608
+            "WHERE option_name IN ('home','siteurl')",
+            database,
+        )
+        rows = [line.split("\t") for line in output.splitlines()]
+        require(
+            len(rows) == 2
+            and all(len(row) == 2 for row in rows)
+            and {row[0] for row in rows} == {"home", "siteurl"},
+            "home/siteurl ausentes ou duplicados",
+        )
+        return {row[0]: bytes.fromhex(row[1]).decode("utf-8") for row in rows}
+
     def inspect_network(self, endpoint_id: str, database: str, prefix: str) -> NetworkSnapshot:
         require(
             self.get_database(endpoint_id).environment is Environment.TEST,
