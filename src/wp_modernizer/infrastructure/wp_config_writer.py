@@ -14,6 +14,26 @@ from wp_modernizer.infrastructure.multisite_config import inspect_multisite
 class WordPressConfigWriter:
     _NAMES = frozenset({"DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD"})
 
+    def inspect_https_config(self, path: Path) -> NetworkConfig | None:
+        from wp_modernizer.infrastructure.ssh.source_config import _strip_php_comments
+
+        clean = _strip_php_comments((path / "wp-config.php").read_text(encoding="utf-8"))
+        require(
+            not any(
+                name in clean
+                for name in ("WP_HOME", "WP_SITEURL", "WP_CONTENT_URL", "WP_CONTENT_DIR", "SUNRISE")
+            ),
+            "HTTPS: constantes de URL/roteamento não suportadas",
+        )
+        require(
+            not any(
+                (path / "wp-content" / name).exists()
+                for name in ("db.php", "object-cache.php", "advanced-cache.php")
+            ),
+            "HTTPS: drop-in de cache/banco não suportado",
+        )
+        return self.inspect_multisite(path)
+
     def inspect_multisite(self, path: Path) -> NetworkConfig | None:
         config = inspect_multisite((path / "wp-config.php").read_text(encoding="utf-8"))
         if config is not None:

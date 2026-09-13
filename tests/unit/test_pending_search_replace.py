@@ -258,3 +258,20 @@ def test_native_dry_run_uses_remote_resolution_not_existing_test_url() -> None:
     assert result.status is StepStatus.VALIDATED
     assert wordpress.search_calls[0]["old_url"] == "https://boletin.bireme.org"
     assert wordpress.search_calls[0]["new_url"] == "https://boletin.teste.bireme.org"
+
+
+def test_pending_completion_waits_for_every_planned_installation() -> None:
+    manifest = RunManifest("r", "site", Operation.MIGRATE, RunStatus.RUNNING, "now", False)
+    context = execution_context(manifest=manifest)
+    manifest.pending_operations = list(context["migration_plan"].pending_operations)
+    manifest.planned_steps = [
+        PlannedStep("pending_search_replace", True, True, "", "", key) for key in ("site", "child")
+    ]
+    runtime = operation(RecordingWordPress())
+    runtime.execute("pending_search_replace", context)
+    assert not manifest.pending_operations[0].completed
+    assert manifest.recovery_data["site"]["pending_search_replace_completed"] == "true"
+    context["planned_step"] = manifest.planned_steps[1]
+    runtime.execute("pending_search_replace", context)
+    assert manifest.pending_operations[0].completed
+    assert manifest.recovery_data["child"]["pending_search_replace_completed"] == "true"

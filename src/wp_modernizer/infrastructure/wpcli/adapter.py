@@ -61,7 +61,15 @@ class WPCLIAdapter:
         return result.stdout.strip()
 
     def search_replace(
-        self, path: Path, old_url: str, new_url: str, *, dry_run: bool, multisite: bool, run_id: str
+        self,
+        path: Path,
+        old_url: str,
+        new_url: str,
+        *,
+        dry_run: bool,
+        multisite: bool,
+        run_id: str,
+        regex: bool = False,
     ) -> int:
         argv = [
             *self._prefix,
@@ -76,17 +84,22 @@ class WPCLIAdapter:
             "--report-changed-only",
             "--format=count",
         ]
+        if regex:
+            argv.extend(["--regex", "--regex-flags=i"])
         if dry_run:
             argv.append("--dry-run")
         if multisite:
             argv.append("--network")
         result = self._runner.run(argv, timeout=600, correlation_id=run_id)
-        if result.return_code != 0:
+        if result.return_code != 0 or (regex and result.stderr.strip()):
             raise WordPressUnavailableError(
                 "falha no search-replace que considera serialização; consulte o log redigido"
             )
         try:
-            return int(result.stdout.strip())
+            count = int(result.stdout.strip())
+            if count < 0:
+                raise ValueError("negative replacement count")
+            return count
         except ValueError as exc:
             raise WordPressUnavailableError(
                 "WP-CLI retornou uma contagem inválida para o search-replace"

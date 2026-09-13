@@ -273,6 +273,23 @@ class RuntimeOperations:
                 context.get("recovery_data", {}),
             )
 
+        if step_name in {"plan_test_https", "enforce_test_https"}:
+            from wp_modernizer.application.test_https import TestHttpsOperations
+
+            require(self._config_writer is not None, "HTTPS: writer ausente")
+            assert self._config_writer is not None
+            https_changes = TestHttpsOperations(
+                self._databases, self._wordpress, self._config_writer
+            ).execute(
+                step_name,
+                path,
+                context.get("recovery_data", {}).get(planned_step.installation_id, {}),
+                run_id,
+            )
+            return replace(
+                self._ok(step_name, https_changes > 0, "HTTPS: plano/estado de TESTE validado"),
+                metrics={"replacements": float(https_changes)},
+            )
         if step_name in {"plan_multisite_domain", "correct_multisite_domain"}:
             return self._multisite(step_name, path, context, run_id, planned_step.installation_id)
         if step_name == "preflight":
@@ -888,11 +905,7 @@ class RuntimeOperations:
             planned_step = context.get("planned_step")
             installation_id = getattr(planned_step, "installation_id", "")
             resolution = context.get("recovery_data", {}).get(installation_id, {})
-            if (
-                (dry_run or resolution.get("multisite_plan"))
-                and resolution.get("source_url")
-                and resolution.get("test_url")
-            ):
+            if resolution.get("source_url") and resolution.get("test_url"):
                 old_url = resolution["source_url"]
                 new_url = resolution["test_url"]
             else:
@@ -923,9 +936,23 @@ class RuntimeOperations:
 
         manifest = context.get("manifest")
         if manifest is not None and not dry_run:
+            manifest.recovery_data.setdefault(installation_id, {})[
+                "pending_search_replace_completed"
+            ] = "true"
+            affected = {
+                step.installation_id
+                for step in manifest.planned_steps
+                if step.name == "pending_search_replace"
+            } or {installation_id}
+            all_completed = all(
+                manifest.recovery_data.get(key, {}).get("pending_search_replace_completed")
+                == "true"
+                for key in affected
+            )
             for index, operation in enumerate(manifest.pending_operations):
                 if (
-                    operation.operation_type is pending.operation_type
+                    all_completed
+                    and operation.operation_type is pending.operation_type
                     and operation.parameters == pending.parameters
                     and not operation.completed
                 ):

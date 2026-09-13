@@ -64,6 +64,10 @@ class SourceInspectionPort(ServerRegistry, Protocol):
 
 
 class DatabasePort(DatabaseRegistry, Protocol):
+    def inspect_site_urls(
+        self, endpoint_id: str, database: str, prefix: str
+    ) -> Mapping[str, str]: ...
+
     def inspect_network(self, endpoint_id: str, database: str, prefix: str) -> NetworkSnapshot: ...
 
     def apply_network(
@@ -115,6 +119,7 @@ class WordPressPort(Protocol):
         dry_run: bool,
         multisite: bool,
         run_id: str,
+        regex: bool = False,
     ) -> int: ...
 
     def update(self, path: Path, arguments: Sequence[str], run_id: str) -> str: ...
@@ -220,6 +225,8 @@ class MutableOperations(Protocol):
 
 
 class WordPressConfigWriterPort(Protocol):
+    def inspect_https_config(self, path: Path) -> NetworkConfig | None: ...
+
     def inspect_multisite(self, path: Path) -> NetworkConfig | None: ...
 
     def set_multisite_domain(self, path: Path, source: str, target: str, run_id: str) -> None: ...

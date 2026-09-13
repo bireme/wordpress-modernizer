@@ -16,7 +16,8 @@ Por instalação, inclusive instalações aninhadas:
 5. O runner grava o plano em `RunManifest.recovery_data[installation_id].multisite_plan`.
 6. `correct_multisite_domain`: aplica o plano, grava `DOMAIN_CURRENT_SITE` atomicamente,
    compara os dados finais e enumera a rede com WP-CLI.
-7. `pending_search_replace`, seguido das etapas de modernização quando a operação é `pipeline`.
+7. Por instalação: `pending_search_replace`, `plan_test_https` e `enforce_test_https`
+   ([P1.2](test-https.md)), seguidos da modernização quando a operação é `pipeline`.
 
 A resolução de URLs já ocorria no snapshot anterior à importação; não foi duplicada.
 O runner adia suas sondagens de bootstrap entre a cópia e a correção estrutural.
@@ -70,8 +71,8 @@ São recusados, sem adivinhar valores:
   A correção não executa um flush de cache potencialmente compartilhado.
 - Destino igual à origem ou com sobreposição de URL/hostname que torne o search-replace ambíguo.
 
-O suporte não configura DNS/vhosts/certificados dos novos subdomínios. Também não implementa
-conversão geral HTTPS, bloqueio de indexação, traduções ou postflight geral.
+O suporte não configura DNS/vhosts/certificados dos novos subdomínios. A conversão HTTPS interna é responsabilidade do [P1.2](test-https.md). Não implementa
+bloqueio de indexação, traduções ou postflight geral.
 
 Os testes locais exercitam planejamento, adapters com comandos simulados, escrita real de
 wp-config e persistência real do manifesto. A integração externa do projeto continua dependente
