@@ -223,6 +223,36 @@ Esse arquivo:
 
 Cada plugin gerenciado é validado antes da execução.
 
+`strategy: replace_from_git` mantém a substituição por clone em staging, com as
+validações e rollback existentes. `strategy: update_from_git` atualiza o checkout
+existente por `fetch` da branch configurada e `merge --ff-only`, sem criar merge
+commits. Exige checkout na branch configurada, remote `origin` correspondente ao
+`repository` e ausência de operações Git pendentes. URLs HTTPS e SSH convencionais
+podem representar o mesmo repositório; outro remote não é corrigido automaticamente.
+
+As políticas para modificações locais são:
+
+* `abort`: preserva o conteúdo e retorna `FAILED_PRESERVED`, interrompendo os plugins seguintes.
+* `skip`: preserva e ignora explicitamente o plugin, continuando o processamento.
+* `stash`: em `update_from_git`, salva arquivos tracked e untracked com
+  `git stash push --include-untracked -m "wp-modernizer <run-id>"` e tenta reaplicá-los
+  com `stash apply --index`. O stash é mantido como cópia de recuperação mesmo após sucesso.
+
+Conflitos na reaplicação exigem intervenção manual e retornam `FAILED_PRESERVED`.
+Não há resolução automática, reset ou limpeza do checkout. Se fetch ou fast-forward
+falhar, as alterações permanecem no stash identificado na mensagem; inspecione
+`git status` e `git stash list` antes de recuperar manualmente. Um stash já reaplicado
+não deve ser aplicado novamente. Arquivos ignorados pelo Git não entram nesse stash.
+
+Plugins inexistentes usam o mesmo clone/staging da substituição. Diretórios existentes
+não Git, inválidos ou com metadados externos não são convertidos destruindo conteúdo:
+as regras conservadoras do fallback recusam a substituição (`FAILED_PRESERVED`, ou
+`SKIPPED` para diretório não verificável com política `skip`). `replace_from_git` com
+`stash` também preserva e recusa um diretório sujo, pois substituir o checkout eliminaria
+seus metadados locais; use `update_from_git` para reaplicar modificações. Todas as
+operações continuam restritas ao ambiente TEST e ao diretório autorizado de plugins.
+
+
 ---
 
 ## Conceitos de segurança

@@ -118,8 +118,8 @@ class ManagedPluginConfig(BaseModel):
     slug: str
     repository: str
     branch: str = "main"
-    strategy: Literal["replace_from_git"] = "replace_from_git"
-    dirty_policy: Literal["abort", "skip"] = "abort"
+    strategy: Literal["replace_from_git", "update_from_git"] = "replace_from_git"
+    dirty_policy: Literal["abort", "skip", "stash"] = "abort"
 
     @field_validator("slug")
     @classmethod
