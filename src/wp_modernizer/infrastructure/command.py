@@ -60,10 +60,10 @@ class SubprocessCommandRunner:
         stdout = completed.stdout.decode(errors="replace") if completed.stdout else ""
         stderr = completed.stderr.decode(errors="replace") if completed.stderr else ""
         return CommandResult(
-            self._redactor.argv(argv),
+            tuple(argv),
             completed.returncode,
-            self._redactor.redact(stdout),
-            self._redactor.redact(stderr),
+            stdout,
+            stderr,
             time.monotonic() - started,
             correlation_id,
         )
