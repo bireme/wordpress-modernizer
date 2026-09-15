@@ -1,11 +1,13 @@
-# Requisitos de implantação ainda necessários
+# Requisitos de implantação
 
 ## PHP lado a lado
 
 O servidor operacional de TESTE deve disponibilizar o WP-CLI no caminho absoluto configurado e
 todos os binários PHP exigidos pela rota. PHP 7.4 pode coexistir com PHP 8.1, 8.2, 8.3, 8.4 ou o
 runtime `current`; cada processo é invocado explicitamente como `/usr/bin/phpX.Y /caminho/wp`.
-Não configure `update-alternatives` para o modernizer e não dependa do `php` global.
+O pipeline usa os runtimes selecionados sem alterar `update-alternatives`.
+`inventory` e `diagnose`, porém, usam o probe padrão com `php` do PATH e WP-CLI sem
+prefixo PHP explícito; não validam toda a rota configurada. Use `plan` para inspecionar os runtimes.
 
 PHP 7.4 está EOL. Trate-o como dependência transitória isolada, obtida de uma fonte de pacotes
 aprovada pela organização, e remova-o depois que todas as instalações antigas forem modernizadas,
@@ -18,7 +20,7 @@ O conjunto é derivado da operação e das etapas que realmente serão executada
 
 | Capability | Executável | Quando é obrigatória |
 |---|---|---|
-| `PHP_AVAILABLE` | caminho de cada runtime PHP | diagnóstico operacional e etapa que usa WP-CLI |
+| `PHP_AVAILABLE` | runtime selecionado; `php` do PATH no diagnóstico independente | diagnóstico operacional e etapas roteadas |
 | `WPCLI_AVAILABLE` | `wpcli_binary` absoluto | operações WordPress |
 | `MYSQL_AVAILABLE` | `mysql` | inspeção, importação e proteção do banco |
 | `MYSQLDUMP_AVAILABLE` | `mysqldump` | cópia real do banco |
@@ -35,7 +37,8 @@ operação antes da criação do run e identifica seu nome no erro.
 Para autenticação por chave, a inspeção da origem (inclusive no dry-run) exige `ssh`, mas
 não `rsync`; `rsync` só é exigido pela cópia real. Para autenticação por senha, inspeção e cópia
 usam a sessão Paramiko com verificação de host key. O servidor WordPress de PRODUÇÃO não precisa
-disponibilizar `wp` nem PHP CLI: precisa permitir a leitura de `wp-config.php` por SSH/SFTP e, para a cópia por senha,
+disponibilizar `wp` nem PHP CLI: precisa permitir a leitura de `wp-config.php` e
+`wp-includes/version.php` por SSH/SFTP e, para a cópia por senha,
 executar GNU tar em modo de leitura.
 WP-CLI e PHP CLI são requisitos do servidor operacional/TESTE para diagnóstico e operações locais.
 O endpoint MySQL da origem precisa aceitar as consultas `SELECT` de descoberta com uma conta
@@ -45,17 +48,17 @@ somente-leitura.
 |---|---|---|---|
 | Quais são as raízes permitidas das aplicações? | delimitar caminhos destrutivos | lista YAML de caminhos absolutos | substituição desabilitada |
 | Quais servidores de origem e impressões digitais SSH estão aprovados? | conexão e autenticidade do host | IDs de servidor, nomes DNS, portas e implantação de `known_hosts` | migrações indisponíveis |
-| Qual provedor de segredos será usado em produção? | obter credenciais sem arquivos | nome/configuração do provedor ou política de variáveis de ambiente | apenas provedor de ambiente |
+| Quais variáveis de ambiente fornecerão os secrets? | prover credenciais ao único provider operacional atual | nomes referenciados no YAML e valores no ambiente | referência ausente causa erro |
 | Quais endpoints de bancos de teste são permitidos? | descoberta determinística de bancos | IDs de endpoint/DNS/portas e referências a segredos | localizador informa que não encontrou |
 | Qual endpoint MySQL corresponde a cada origem? | dump somente-leitura e resolução não ambígua | literais remotos de host, banco e credenciais; acesso às portas 6612/3306 ou porta explícita | descoberta da origem é recusada |
 | Bancos de teste ausentes podem ser criados? Por quem? | a criação é privilegiada/destrutiva | provisionamento prévio pela infraestrutura | nunca são criados automaticamente |
-| Quais estratégias de nomes/URLs são necessárias? | convenções específicas de cada instalação | estratégia nomeada e exemplos | substituições explícitas obrigatórias |
+| As convenções de banco/URL atendem cada instalação? | resolução determinística | convenção ou `database_override`, `database_aliases` e `test_url` explícitos | resolução pode ser recusada |
 | Qual política de proprietário/grupo/modo do sistema de arquivos se aplica? | permissões seguras após a cópia | UID/GID/modo ou adaptador de implantação | nenhuma alteração de proprietário |
 | Qual revisão da política de Core/PHP foi aprovada? | compatibilidade controlada de atualização | `policy_id`, revisão e `latest_wordpress` | execução bloqueada até configurar um destino auditado |
-| Quais plugins gerenciados e qual política para árvore suja se aplicam? | evitar perder trabalho local | repositório público/acessível, branch e política | atualização gerenciada ignorada |
+| Quais plugins gerenciados e qual política para árvore suja se aplicam? | evitar perder trabalho local | lista válida em `plugins.yaml`, repositório acessível, branch e política | arquivo ausente/inválido bloqueia configuração; lista vazia não atualiza plugins gerenciados |
 | Onde o estado externo é mantido e copiado? | durabilidade da retomada e auditoria | diretório absoluto e política de retenção/criptografia | apenas estado local configurado |
 | Quais referências de usuário e senha SSH serão provisionadas? | autenticação do transporte SSH | nomes das entradas no `SecretProvider`; nunca os valores | cópia remota indisponível |
-| Qual destino de telemetria e política de dados estão aprovados? | exportação OTLP opcional | endpoint, referências de ambiente para TLS/autenticação e retenção | apenas logs JSON locais |
+| Onde manter os logs e qual retenção aplicar? | auditoria local com conteúdo potencialmente sensível | `<state_directory>/logs/`, permissões e retenção externas | logs indisponíveis ou sem política de retenção |
 
 ## Preflight SSH por senha
 
@@ -87,3 +90,8 @@ Sem porta explícita em `DB_HOST`, a conexão tenta 6612 e somente em caso de
 interrompem sem fallback: trocar de serviço ocultaria uma falha que precisa ser corrigida.
 Uma porta explícita válida (1–65535) é a única tentada. Falhas são sanitizadas; sockets e formatos
 ambíguos são recusados.
+
+O backup automático de substituição é apenas de arquivos; providencie separadamente o
+backup do banco de TESTE anterior se precisar restaurá-lo. Logs e state não têm rotação,
+retenção ou criptografia automáticas. Exportação OTLP não está integrada e não exige endpoint;
+veja [observabilidade](observability.md).

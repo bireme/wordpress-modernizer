@@ -1,4 +1,4 @@
-# P1.1 — Domínios Multisite na cópia de TESTE
+# Domínios Multisite na cópia de TESTE
 
 A migração corrige redes WordPress por subdiretórios ou subdomínios. Instalações comuns
 passam pelas etapas condicionais sem mudanças adicionais. A detecção lê definições literais
@@ -16,8 +16,9 @@ Por instalação, inclusive instalações aninhadas:
 5. O runner grava o plano em `RunManifest.recovery_data[installation_id].multisite_plan`.
 6. `correct_multisite_domain`: aplica o plano, grava `DOMAIN_CURRENT_SITE` atomicamente,
    compara os dados finais e enumera a rede com WP-CLI.
-7. Por instalação: `pending_search_replace`, `plan_test_https` e `enforce_test_https`
-   ([P1.2](test-https.md)), seguidos da modernização quando a operação é `pipeline`.
+7. Depois de preparar todas as instalações: por instalação, `pending_search_replace`
+   (quando pendente), `plan_test_https`, `enforce_test_https`, `plan_test_indexing` e
+   `disable_test_indexing`. Toda essa fase precede a modernização no `pipeline`.
 
 A resolução de URLs já ocorria no snapshot anterior à importação; não foi duplicada.
 O runner adia suas sondagens de bootstrap entre a cópia e a correção estrutural.
@@ -71,8 +72,10 @@ São recusados, sem adivinhar valores:
   A correção não executa um flush de cache potencialmente compartilhado.
 - Destino igual à origem ou com sobreposição de URL/hostname que torne o search-replace ambíguo.
 
-O suporte não configura DNS/vhosts/certificados dos novos subdomínios. A conversão HTTPS interna é responsabilidade do [P1.2](test-https.md). Não implementa
-bloqueio de indexação, traduções ou postflight geral.
+O módulo Multisite faz a correção estrutural; não configura DNS/vhosts/certificados.
+[HTTPS](test-https.md) e [indexação](test-indexing.md) são etapas subsequentes da migração.
+Modernização, traduções e validação de widgets vêm depois no `pipeline`. Não existe uma
+etapa separada de postflight geral; o runner faz sondagens após as etapas executadas.
 
 Os testes locais exercitam planejamento, adapters com comandos simulados, escrita real de
 wp-config e persistência real do manifesto. A integração externa do projeto continua dependente

@@ -13,15 +13,15 @@ O modernizer usa uma política declarativa e auditável para impedir saltos inde
 | Classe | Versão detectada | Comportamento |
 |---|---|---|
 | `ANCIENT` | anterior a 4.9 | bloqueia automação e orienta uma ponte manual até 4.9 |
-| `LEGACY` | 4.9 a 6.8, inclusive | executa somente checkpoints posteriores à versão atual |
-| `CURRENT` | posterior a 6.8 | segue diretamente ao WordPress `latest` aprovado |
+| `LEGACY` | famílias 4.9 a 6.8, incluindo patches | executa somente checkpoints posteriores à versão atual |
+| `CURRENT` | família 6.9 ou posterior | segue diretamente ao WordPress `latest` aprovado |
 
 A revisão inicial passa por WordPress 5.3 com PHP 7.4, WordPress 6.2 com PHP 7.4 e WordPress 6.8
-com um PHP compatível a partir de 8.1; depois continua até `latest` usando o runtime `current`.
+com um runtime PHP entre 8.1 e 8.4; depois continua até `latest` usando o runtime `current`.
 PHP 7.4 é transitório e está EOL. Instale-o por uma fonte aprovada e remova-o ao terminar todas as
 modernizações, se nenhuma outra aplicação depender dele.
 
-Os runtimes coexistem e são selecionados por caminho absoluto. O WP-CLI é chamado como
+Os runtimes coexistem e são selecionados por caminho absoluto nas etapas planejadas. O WP-CLI é chamado como
 `/usr/bin/php7.4 /usr/local/bin/wp ...` ou equivalente. O modernizer nunca troca o PHP global,
 instala pacotes, executa `sudo`, adiciona repositórios ou modifica FPM/Apache/Nginx. `plan` apenas
 inspeciona os binários com `-v` e, quando seguro, mostra sugestões informativas.
@@ -36,7 +36,19 @@ e [matriz oficial PHP/WordPress](https://make.wordpress.org/core/handbook/refere
 
 ## Visão geral
 
-![Fluxo operacional do WordPress Modernizer](docs/images/wordpress-modernizer-flow.png)
+```mermaid
+flowchart LR
+    A[Origem: leitura] --> B[Backup e cópia dos arquivos]
+    B --> C[Descoberta e cópia do banco]
+    C --> D[Configuração de TESTE e Multisite]
+    D --> E[Search-replace, HTTPS e indexação]
+    E --> F[Checkpoints WordPress/PHP]
+    F --> G[Plugins, temas e traduções]
+    G --> H[Validação de widgets]
+```
+
+Visão resumida de `pipeline`; o runner faz sondagens e preserva o estado em caso de falha.
+A [ordem detalhada](docs/operations.md#ordem-real-da-migração) inclui instalações aninhadas.
 
 O fluxo segue o princípio de falha com preservação:
 
@@ -59,8 +71,8 @@ cópia de TESTE
                    |
                    +--> parar
                    +--> preservar estado
-                   +--> correção manual
-                   +--> resume
+                   +--> correção da causa externa
+                   +--> resume se consistente
 ```
 
 > **O wp-modernizer nunca implanta em PRODUÇÃO.**
@@ -82,7 +94,7 @@ cópia de TESTE
 * proteção contra operações destrutivas em caminhos não autorizados;
 * backup da cópia de TESTE antes de substituí-la;
 * suporte a SSH por chave ou senha;
-* credenciais sensíveis mantidas fora dos logs e do estado persistido;
+* referências a secrets e sanitização de logs;
 * arquitetura baseada em portas e adaptadores;
 * testes unitários independentes de WordPress, MySQL, SSH e WP-CLI.
 
@@ -288,7 +300,7 @@ DB_USER
 DB_PASSWORD
 ```
 
-da instalação de PRODUÇÃO não são persistidos em:
+obtidos para a conexão efêmera de PRODUÇÃO não são acrescentados aos metadados de conexão em:
 
 * logs;
 * exceções;
@@ -296,6 +308,9 @@ da instalação de PRODUÇÃO não são persistidos em:
 * manifestos;
 * recovery data;
 * argumentos de subprocessos.
+
+Essa proteção não torna os artefatos livres de secrets: a cópia/backup de `wp-config.php`
+e opções do site podem conter dados sensíveis; veja [segurança](docs/security.md).
 
 Quando o cliente MySQL precisa utilizá-los, eles são fornecidos por arquivo temporário protegido e removido depois da operação.
 
@@ -325,9 +340,9 @@ pipeline
 wp-modernizer --config config.yaml inventory example-site
 ```
 
-`inventory` coleta informações disponíveis da instalação.
-
-Campos independentes são analisados individualmente; a indisponibilidade de uma informação não precisa interromper toda a coleta.
+`inventory` combina diagnóstico do destino local com caminhos e dados configurados.
+Versões, tema ativo, lista de plugins, URL e contagens de widgets ainda são campos
+`indisponível`, mesmo quando há capacidades disponíveis; não é um inventário completo da origem.
 
 ### 2. Diagnosticar capacidades
 
@@ -337,7 +352,8 @@ wp-modernizer --config config.yaml diagnose example-site
 
 `diagnose` verifica capacidades e integridade do ambiente.
 
-Isso ajuda a identificar antecipadamente problemas como ausência de PHP, WP-CLI ou outros recursos necessários.
+Isso ajuda a identificar problemas locais como ausência de PHP ou WP-CLI. O diagnóstico
+independente usa `php` do PATH; `plan` inspeciona os runtimes explícitos da rota.
 
 ### 3. Gerar o plano
 
@@ -358,13 +374,15 @@ O planejamento inclui, conforme aplicável:
 * etapas;
 * dependências;
 * pontos de controle;
-* banco de origem;
-* banco de destino;
-* URLs;
+* rota WordPress/PHP e prontidão dos runtimes;
 * caminhos;
 * exclusões de cópia;
 * trabalho pendente;
 * resolução de instalações aninhadas.
+
+A descoberta efetiva de banco e URL ocorre em `snapshot_source_database`, durante
+`migrate`/`pipeline`, inclusive no dry-run quando as capacidades necessárias estão disponíveis.
+`plan` não executa essa etapa nem resolve os bancos de origem/destino.
 
 ### 4. Validar com dry-run
 
@@ -472,17 +490,9 @@ wp-modernizer --config config.yaml migrate example-site
 
 prepara a cópia de TESTE.
 
-O fluxo pode incluir:
-
-* inspeção da origem;
-* descoberta do banco;
-* resolução do banco de TESTE;
-* backup de uma cópia de TESTE existente;
-* transferência de arquivos;
-* dump da origem;
-* importação no destino;
-* substituições necessárias para o ambiente de TESTE;
-* checkpoints entre etapas.
+A migração faz backup e cópia dos arquivos, descobre banco/URL, importa o banco,
+configura a conexão de TESTE e aplica correções Multisite, search-replace, HTTPS e indexação.
+A [ordem das etapas](docs/operations.md#ordem-real-da-migração) também explica o processamento de instalações aninhadas.
 
 ---
 
@@ -512,11 +522,13 @@ O backup fica fora do `htdocs`:
 <app_root>/.wp-modernizer-backups/<run-id>/<installation-id>/
 ```
 
+Esse backup cobre a árvore de arquivos; não inclui um dump do banco de TESTE anterior.
+
 O snapshot:
 
 * utiliza um caminho novo para cada execução;
 * não sobrescreve backups anteriores;
-* preserva os dados necessários;
+* preserva a árvore de arquivos;
 * tem seu conteúdo verificado;
 * torna-se somente leitura;
 * é revalidado antes da substituição destrutiva.
@@ -613,12 +625,11 @@ O domínio é inferido individualmente a partir de `source_path`, relativamente 
 
 Exemplo:
 
-```text
-allowed_app_root:
-    /home/apps
+```yaml
+allowed_app_roots:
+  - /home/apps
 
-source_path:
-    /home/apps/example.org/wp-example/htdocs
+source_path: /home/apps/example.org/wp-example/htdocs
 ```
 
 resulta no domínio:
@@ -682,8 +693,26 @@ O comando:
 ```bash
 wp-modernizer --config config.yaml update example-site
 ```
+executa as etapas de modernização e atualização definidas para a cópia de TESTE.
 
-executa as etapas de atualização definidas pelo pipeline para a cópia de TESTE.
+Em cada checkpoint de Core, o modernizer:
+
+* verifica a versão atual;
+* atualiza para a versão exata planejada, quando necessário;
+* executa a atualização do banco do WordPress;
+* confirma a versão resultante;
+* verifica os checksums do Core;
+* valida um bootstrap reduzido antes de considerar o checkpoint concluído.
+
+Depois dos checkpoints de Core, o pipeline executa, conforme aplicável:
+
+* atualização dos plugins gerenciados;
+* atualização dos demais plugins;
+* atualização dos temas;
+* atualização das traduções do Core;
+* atualização das traduções dos plugins;
+* atualização das traduções dos temas;
+* validação dos widgets.
 
 O comando não deve ser executado diretamente em uma instalação de PRODUÇÃO.
 
@@ -693,7 +722,7 @@ Para verificar previamente o comportamento planejado:
 wp-modernizer --config config.yaml update example-site --dry-run
 ```
 
-> A sequência exata de operações WordPress executadas pelo pipeline deve permanecer documentada e testada no código e em [`docs/operations.md`](docs/operations.md), especialmente quando novas operações de atualização forem adicionadas.
+> A sequência operacional detalhada e as capacidades de dry-run de cada etapa estão documentadas em [`docs/operations.md`](docs/operations.md).
 
 ---
 
@@ -731,7 +760,8 @@ O modernizer adota o princípio de:
 falhar -> parar -> preservar -> investigar -> corrigir -> retomar
 ```
 
-Uma falha **não provoca rollback automático**.
+Uma falha **não provoca rollback global do pipeline**. A substituição de um plugin
+por staging possui recuperação local própria; veja as políticas de plugins gerenciados.
 
 Isso é intencional.
 
@@ -748,19 +778,47 @@ O estado externo registra informações como:
 * diferenças relevantes;
 * fingerprint da instalação.
 
-Depois da investigação e eventual correção manual, a execução pode ser retomada com:
+Após investigar e corrigir a causa externa, use o ID do manifesto preservado (substitua
+o valor entre aspas) para tentar a retomada:
 
 ```bash
-wp-modernizer --config config.yaml resume example-site
+wp-modernizer --config config.yaml resume example-site --run-id "<run-id>"
 ```
 
 O `resume` não continua cegamente.
 
 Ele compara a instalação atual com o estado registrado e exige consistência antes de continuar.
 
-Uma alteração manual é detectada e precisa ser revisada; ela não é aceita silenciosamente.
+Alterações nos arquivos podem mudar o fingerprint e bloquear `resume`. Não existe opção
+para aceitar um fingerprint novo; nesse caso pode ser necessária uma nova execução.
+Mudanças no banco e em `plugins.yaml` têm regras próprias descritas em [recuperação](docs/recovery.md).
 
-Consulte [`docs/recovery.md`](docs/recovery.md) antes de restaurar backups ou manipular manualmente uma execução interrompida.
+### Restauração explícita de widgets
+
+O modernizer preserva e compara o estado dos widgets durante a atualização.
+
+Quando uma recuperação exigir explicitamente a restauração do snapshot de widgets registrado pela
+execução, utilize:
+
+```bash
+wp-modernizer --config config.yaml resume example-site --run-id "<run-id>" --restore-widgets
+```
+A restauração não ocorre implicitamente durante todo `resume`. A opção
+`--restore-widgets` deve ser fornecida explicitamente quando essa intervenção fizer parte da
+recuperação planejada.
+
+Consulte [`docs/recovery.md`](docs/recovery.md) antes de restaurar backups, restaurar widgets ou realizar outras
+alterações manuais em uma execução preservada.
+
+---
+
+## Códigos de saída
+
+Uma conclusão normal retorna `0`. Para `migrate`, `update` e `pipeline`, o CLI retorna
+explicitamente `2` quando o service **devolve** um manifesto `UPDATE_FAILED_PRESERVED`.
+Exceções propagadas seguem o tratamento de erros do CLI; não há um código próprio
+contratado para cada tipo de falha. `resume` atualmente não aplica a conversão explícita
+para `2`: verifique também o status do manifesto/JSON. Nenhum código autoriza apagar a cópia.
 
 ---
 
@@ -790,6 +848,21 @@ Caso contrário, a recriação do container pode eliminar os manifestos e checkp
 
 ---
 
+## Observabilidade
+
+O CLI grava logs JSON Lines em `<state_directory>/logs/` para `diagnose`, `migrate`,
+`update`, `pipeline` e `resume`, inclusive em dry-run. Manifestos e checkpoints JSON ficam
+separadamente em `<state_directory>/<installation-id>/runs/<run-id>/`.
+
+Os campos variam por evento; não há contexto de correlação automático em todos eles.
+Logs podem conter credenciais em saídas não mascaradas; veja [segurança](docs/security.md).
+Existe uma abstração interna de métricas em memória, mas o extra `otel` não ativa exportação:
+OpenTelemetry/OTLP e variáveis `OTEL_*` não estão integrados ao fluxo operacional.
+
+Consulte [observabilidade](docs/observability.md) para formatos, campos e limites.
+
+---
+
 ## Transporte SSH
 
 Cada servidor escolhe explicitamente seu método de autenticação.
@@ -802,7 +875,7 @@ authentication: password
 
 Utiliza um stream de GNU tar por SSH através do Paramiko para copiar árvores,
 preservando inclusive nomes Unix com bytes inválidos em UTF-8. Requer GNU tar na origem.
-SFTP continua sendo usado somente para ler `wp-config.php`.
+SFTP é usado para ler `wp-config.php` e `wp-includes/version.php`.
 
 Usuário e senha são obtidos somente no momento da conexão.
 
@@ -824,7 +897,8 @@ host_key_policy: strict
 
 Nesse modo, chaves desconhecidas ou alteradas são rejeitadas.
 
-Também é possível indicar um arquivo adicional:
+Também é possível indicar um arquivo de host keys (adicional no Paramiko;
+`UserKnownHostsFile` no OpenSSH):
 
 ```yaml
 known_hosts_file: /etc/wp-modernizer/known_hosts
@@ -838,9 +912,47 @@ Esse arquivo deve ser provisionado previamente por um canal confiável.
 
 O planner trata instalações pai/filho explicitamente.
 
-Quando uma instalação contém outra instalação WordPress em sua árvore, as exclusões de cópia são calculadas de forma determinística para impedir que o fluxo do pai substitua indevidamente o filho.
+As instalações filhas precisam estar cadastradas em `installations`; não há descoberta
+recursiva de instalações não cadastradas. O plano calcula exclusões de cópia para as filhas
+selecionadas sob o caminho de destino do pai. A substituição remove a árvore antiga inteira
+após o backup; as exclusões delimitam a transferência, não preservam a filha antiga no local.
 
 Cada instalação continua sendo processada por suas próprias etapas.
+
+---
+
+## Proteções da cópia de TESTE
+
+Além de impedir operações mutáveis em PRODUÇÃO, o fluxo de migração aplica proteções específicas
+à cópia de TESTE antes das etapas de modernização e atualização.
+
+### HTTPS em TESTE
+
+Durante a migração, as referências HTTP dos hosts próprios da cópia de TESTE são normalizadas para
+HTTPS.
+
+O planejamento e a execução dessa transformação fazem parte do estado persistido da execução para
+permitir validação e retomada consistentes.
+
+Consulte [`docs/test-https.md`](docs/test-https.md) para o comportamento completo.
+
+### Indexação por mecanismos de busca
+
+Após a normalização HTTPS, o modernizer configura:
+
+```text
+blog_public=0
+```
+
+Em instalações single-site e em todos os blogs relevantes de instalações Multisite.
+
+Essa configuração desencoraja mecanismos de busca a indexarem a cópia de TESTE, mas não constitui
+um bloqueio absoluto contra crawlers.
+
+A operação possui planejamento persistido e comportamento idempotente para permitir retomada
+segura.
+
+Consulte [`docs/test-indexing.md`](docs/test-indexing.md).
 
 ---
 
@@ -928,11 +1040,12 @@ pytest
 
 Os testes marcados como integração são excluídos da execução padrão.
 
-Eles dependem de infraestrutura externa configurada explicitamente.
+O teste externo atual é um placeholder e sempre é pulado, mesmo com opt-in.
+Uma integração WordPress/MySQL real ainda exige fixtures de laboratório; veja [desenvolvimento](docs/development.md).
 
 ### Cobertura
 
-A configuração do projeto exige cobertura mínima de:
+Quando a cobertura é coletada (`pytest --cov`, como na CI), o limite mínimo é:
 
 ```text
 80%
@@ -1006,15 +1119,15 @@ Se uma execução falhar:
 ```text
 investigue a cópia preservada
         |
-corrija o problema
+corrija a causa externa
         |
-revise o estado
+confirme configuração e fingerprint consistentes
         |
-execute resume
+tente resume (ou inicie nova execução se houver divergência)
 ```
 
 ```bash
-wp-modernizer --config config.yaml resume example-site
+wp-modernizer --config config.yaml resume example-site --run-id "<run-id>"
 ```
 
 ---
@@ -1074,6 +1187,53 @@ Detalha:
 * composition root;
 * separação das responsabilidades.
 
+### [Requisitos de implantação](docs/deployment-requirements.md)
+
+Detalha:
+
+* runtimes PHP necessários;
+* executáveis e capabilities de preflight;
+* requisitos de SSH e MySQL;
+* infraestrutura que precisa ser provisionada externamente;
+* requisitos operacionais antes de liberar uma instalação.
+
+### [Segurança](docs/security.md)
+
+Detalha:
+
+* fronteiras entre PRODUÇÃO e TESTE;
+* proteção de caminhos e endpoints;
+* tratamento de segredos;
+* segurança dos subprocessos;
+* transporte SSH;
+* validações durante cópia e extração de arquivos.
+
+### [Multisite](docs/multisite.md)
+
+Detalha o comportamento específico para instalações WordPress Multisite e suas transformações.
+
+### [Observabilidade](docs/observability.md)
+
+Detalha:
+
+* logs e relatórios estruturados;
+* correlação por `run_id`;
+* métricas;
+* limites atuais: sem exportação OpenTelemetry/OTLP.
+
+### [Desenvolvimento](docs/development.md)
+
+Detalha o ambiente de desenvolvimento, verificações locais e procedimentos destinados a
+contribuidores.
+
+### [HTTPS em TESTE](docs/test-https.md)
+
+Detalha a normalização HTTPS aplicada às cópias de TESTE.
+
+### [Indexação em TESTE](docs/test-indexing.md)
+
+Detalha a proteção contra indexação das cópias de TESTE.
+
 ---
 
 ## Princípios operacionais
@@ -1103,10 +1263,3 @@ Resume valida o estado antes de continuar.
 ## Licença
 
 A seleção da licença do projeto ainda depende de aprovação organizacional.
-
-A normalização HTTPS interna da cópia de TESTE está descrita em [P1.2 — HTTPS](docs/test-https.md).
-
-As cópias de TESTE recebem `blog_public=0` após HTTPS, em single-site e em todos os
-blogs de multisite, com plano persistido, validação e resume idempotente.
-Essa opção desencoraja mecanismos de busca; não é bloqueio absoluto de crawlers.
-Veja [indexação em TESTE (P1.3)](docs/test-indexing.md).

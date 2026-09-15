@@ -1,8 +1,10 @@
 # Em container, use um volume persistente para permitir resume.
+# Caminho relativo ao diretório corrente; mantenha o state fora da instalação.
 state_directory: ./state
 
-# A versão estável mais recente aprovada pela política da organização. Ela é
-# resolvida durante plan e persistida no manifesto para que resume não mude a rota.
+# Alvo ilustrativo: substitua pela versão estável aprovada pela organização e
+# aceita pela matriz interna. Não consulta releases; plan resolve este valor explícito.
+# A execução persiste a rota no manifesto para que resume não a recalcule.
 latest_wordpress: "7.1"
 wpcli_binary: /usr/local/bin/wp
 
@@ -52,6 +54,8 @@ installations:
 
 database_overrides: {}
 
+# Campos aceitos pelo modelo, mas ainda sem efeito operacional.
+# O CLI usa <state_directory>/logs/ e --json; não há exportação OTLP integrada.
 observability:
   json_stdout: true
   log_file: null
