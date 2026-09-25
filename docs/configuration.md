@@ -26,9 +26,15 @@ php_runtimes:
     version: "8.5"
 ```
 
-`latest_wordpress` é a versão estável mais recente aprovada pela organização e aceita pela matriz
-de compatibilidade auditada na política. Ela evita scraping durante `plan`; o valor resolvido fica
-preso ao manifesto do run. O binário existir não basta: `plan` executa somente `<binary> -v`,
+`latest_wordpress` é um número estável explícito aprovado pela organização, não a palavra
+`latest` nem uma consulta automática à versão publicada. O exemplo `7.1` é ilustrativo;
+o código não comprova disponibilidade ou aprovação organizacional. O resolvedor aceita
+as famílias 6.9, 7.0 e 7.1 declaradas em `FINAL_COMPATIBILITY`, incluindo patches.
+A rota final exige PHP `current` entre 8.1 e 8.5; o checkpoint 6.8 exige 8.1 a 8.4.
+O alvo não pode ser anterior à versão detectada e, para a rota legacy, deve superar 6.8.
+Sem alvo aceito/runtimes válidos, a rota é bloqueada, inclusive em `migrate` e dry-run.
+Não há scraping durante `plan`; o valor resolvido fica preso ao manifesto do run.
+O binário existir não basta: `plan` executa somente `<binary> -v`,
 confirma a família real e rejeita divergências. Os valores são argumentos estruturados, não
 comandos shell configuráveis.
 
@@ -36,8 +42,9 @@ Para adicionar um checkpoint, acrescente um `LegacyCheckpoint` à política cent
 `domain/modernization.py`, declare um `PhpRuntimeRequirement` exato ou mínimo e incremente a
 revisão. O planner, pipeline, state e resume consomem a coleção declarativa sem novos desvios
 procedurais. Uma futura rota ANCIENT também pode baixar `automatic_minimum` e declarar checkpoints
-PHP 5.6/7.2 na mesma política. `core_checkpoints` por instalação foi substituído por essa política
-versionada.
+PHP 5.6/7.2 na mesma política. `core_checkpoints` ainda é aceito pelo modelo por
+compatibilidade, mas uma lista não vazia bloqueia o planejamento operacional com
+`TARGET_POLICY_CONFIGURATION_REQUIRED`. Omita-o ou use `[]`; ele não personaliza a rota.
 
 ## Plugins gerenciados
 
@@ -59,7 +66,7 @@ Cada instalação informa um servidor de origem, um ambiente de origem (`product
 um caminho absoluto de origem, um destino de TESTE opcional e IDs permitidos de endpoints de
 banco de dados de teste. `allowed_database_endpoints` é validado como uma allowlist exclusivamente
 de destinos TESTE; incluir PRODUÇÃO nesse campo é erro de configuração. Apelidos e substituições
-exatas de bancos são explícitos. Por padrão, o modernizer opera somente sobre schemas previamente
+exatas de bancos são explícitos. O modernizer opera somente sobre schemas previamente
 provisionados pela infraestrutura.
 
 ## Diretório de estado
@@ -106,7 +113,7 @@ ambíguos são recusados.
 A conexão de PRODUÇÃO é efêmera: `DB_USER` e `DB_PASSWORD` não entram em logs, exceções,
 `repr()`, manifestos, state ou recovery data, nem em argumentos de subprocessos. O cliente MySQL
 recebe as credenciais em `--defaults-extra-file` temporário com permissão `0600`, removido em
-sucesso e erro. O estado guarda apenas metadados não secretos. Antes de retomar a cópia do banco,
+sucesso e erro. O snapshot de conexão guarda apenas metadados não secretos. Antes de retomar a cópia do banco,
 `resume` relê o `wp-config.php`, redescobre a conexão e exige banco, host e porta iguais ao snapshot;
 usuário e senha podem mudar e não são comparados nem persistidos no estado.
 
@@ -165,7 +172,24 @@ O valor da senha não pertence ao YAML. O adapter SSH por senha obtém usuário 
 conexão e os fornece à API do Paramiko, sem passar credenciais ao shell ou a subprocessos. `authentication: key` continua
 disponível com `private_key` e usa OpenSSH/rsync; os dois mecanismos são adapters separados.
 
-Com `host_key_policy: strict`, o transporte carrega o `~/.ssh/known_hosts` da conta que executa a
-aplicação e rejeita chaves desconhecidas ou alteradas. `known_hosts_file` pode indicar um arquivo
-OpenSSH adicional, por exemplo `/etc/wp-modernizer/known_hosts`. O arquivo deve ser provisionado
+Com `host_key_policy: strict`, chaves desconhecidas ou alteradas são rejeitadas.
+Paramiko carrega `~/.ssh/known_hosts` da conta operacional e, se configurado, adiciona
+`known_hosts_file`. No transporte por chave, `known_hosts_file` define o
+`UserKnownHostsFile` do OpenSSH, substituindo sua lista padrão de arquivos de usuário.
+Exemplo: `/etc/wp-modernizer/known_hosts`. O arquivo deve ser provisionado
 antes do preflight por um canal confiável. Não use `accept-new` em produção.
+
+## Caminhos locais e observabilidade
+
+Caminhos relativos, como `state_directory: ./state`, são resolvidos a partir do diretório
+corrente do processo, não do diretório do YAML. Para operação previsível, prefira um caminho
+absoluto externo à instalação e persistente. `allowed_app_roots` deve ser uma lista não vazia:
+
+```yaml
+allowed_app_roots:
+  - /home/apps
+```
+
+`observability.json_stdout`, `observability.log_file` e `observability.otel_enabled` são
+validados, mas não consumidos pelo CLI/composition root. Os logs usam
+`<state_directory>/logs/`; `--json` controla a saída CLI. Veja [observabilidade](observability.md).

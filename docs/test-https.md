@@ -1,8 +1,9 @@
-# P1.2 — HTTPS interno na cópia de TESTE
+# HTTPS interno na cópia de TESTE
 
 A migração normaliza referências HTTP dos hosts próprios da cópia para HTTPS. Não configura
-certificados, DNS, vhosts ou proxy: o domínio de TESTE deve oferecer HTTPS. Não implementa
-bloqueio de indexação, mudanças nas traduções ou postflight geral.
+certificados, DNS, vhosts ou proxy: o domínio de TESTE deve oferecer HTTPS.
+A proteção de [indexação](test-indexing.md) é outra etapa, executada depois de HTTPS;
+as traduções pertencem à atualização. Não há uma etapa separada de postflight geral.
 
 ## Ordem e arquitetura
 
@@ -11,16 +12,17 @@ O planejamento mantém a preparação de todas as instalações (inclusive aninh
 `write_test_db_config` → `plan_multisite_domain` → `correct_multisite_domain`.
 
 Depois, para cada instalação: `pending_search_replace` (quando pendente) → `plan_test_https`
-→ `enforce_test_https`. Na operação `pipeline`, todas essas etapas precedem modernização,
+→ `enforce_test_https` → `plan_test_indexing` → `disable_test_indexing`.
+Na operação `pipeline`, todas essas etapas precedem modernização,
 updates de core/plugins/temas, traduções e validações existentes. O comando independente
-`update` mantém seu escopo anterior; P1.2 integra `migrate` e `pipeline`.
+`update` não inclui essas etapas; HTTPS integra `migrate` e `pipeline`.
 
 O domínio contém a transformação e as regras de replay; `application/test_https.py` coordena
 `DatabasePort`, `WordPressPort` e `WordPressConfigWriterPort`. O runtime exige destino TESTE;
 a etapa verifica também o ambiente do endpoint, a conexão completa do wp-config e o prefixo
-persistido antes do bootstrap. Nenhum acesso a PRODUÇÃO é necessário para o P1.2.
+persistido antes do bootstrap. Nenhum acesso a PRODUÇÃO é necessário para a etapa HTTPS.
 
-O [P1.1](multisite.md) continua responsável pela migração estrutural dos domínios. P1.2 não
+O módulo [Multisite](multisite.md) é responsável pela migração estrutural dos domínios. HTTPS não
 escreve wp-config, IDs, paths nem hostnames estruturais. `DOMAIN_CURRENT_SITE` permanece um
 hostname sem protocolo, e as demais constantes Multisite permanecem inalteradas.
 
@@ -29,7 +31,7 @@ hostname sem protocolo, e as demais constantes Multisite permanecem inalteradas.
 Single-site: o hostname exato da URL de TESTE resolvida no snapshot. `home` e `siteurl` devem
 pertencer a esse host; seus paths podem ser diferentes e são preservados.
 
-Multisite: somente os hosts enumerados na topologia corrigida e validada pelo P1.1. Redes por
+Multisite: somente os hosts enumerados na topologia corrigida e validada pelo módulo Multisite. Redes por
 subdiretórios compartilham uma transformação de host; redes por subdomínios têm uma por host.
 Os blogs afetados ficam registrados no plano. Não se infere uma lista ilimitada de subdomínios.
 
@@ -71,15 +73,16 @@ Uma execução sem ocorrências informa `changed=false`, inclusive quando o cont
 
 - `WP_HOME`, `WP_SITEURL`, `WP_CONTENT_URL`, `WP_CONTENT_DIR`, `SUNRISE` e drop-ins de
   banco/cache são recusados, também em single-site. Não há edição textual genérica de PHP.
-- Valem os limites estruturais do P1.1, incluindo redes múltiplas e domínios mapeados externos.
+- Valem os limites estruturais do módulo Multisite, incluindo redes múltiplas e domínios mapeados externos.
 - URLs estruturais com portas, credenciais, query/fragment ou hostname não conservador são
   recusadas. Referências de conteúdo com autoridade contendo porta explícita não pertencem
   aos pares sem porta deste plano e são preservadas.
 - URLs codificadas (por exemplo `http:\/\/`, percent-encoding, base64), arquivos de temas/plugins
   e recursos fora das tabelas com o prefixo não são decodificados/editados por esta etapa.
 - A cobertura de serialização segue o motor do WP-CLI, não substitui chaves de arrays nem
-  decodifica formatos arbitrários. Avisos em stderr durante o search-replace HTTPS falham
-  fechados, evitando aceitar silenciosamente objetos que o motor não conseguiu processar.
+  decodifica formatos arbitrários. O adapter recusa código de saída não zero ou contagem
+  inválida; stderr isolado com sucesso e contagem válida não causa falha nessa operação.
+  Portanto, a presença de avisos deve ser investigada nos logs.
 - Regex pode ser mais lento que o search-replace literal; mantém-se o timeout do adapter.
   Falhas preservam TESTE para retomada. Não há rollback automático ou flush de cache remoto.
 

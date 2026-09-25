@@ -1,3 +1,8 @@
+# Lista pública carregada automaticamente de caminho fixo; não inclua secrets.
+# update_from_git exige branch/origin compatíveis e usa fetch + merge --ff-only.
+# stash inclui tracked/untracked, reaplica com --index e mantém o stash após sucesso.
+# Arquivos ignorados não entram no stash. Conflitos interrompem e preservam o checkout.
+# As regras para resume e alterações desta lista estão em docs/recovery.md.
 managed_plugins:
   - slug: lis
     repository: https://github.com/bireme/lis-wp-plugin.git

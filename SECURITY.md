@@ -6,3 +6,7 @@ segurança da organização.
 
 Segredos devem ficar em variáveis de ambiente ou em uma futura implementação de
 `SecretProvider`; eles nunca devem ser versionados.
+
+State, logs e backups também podem conter dados sensíveis da instalação, inclusive opções
+de widgets e arquivos de configuração. A sanitização de logs não substitui controle de
+acesso, retenção e criptografia externos. Consulte o [modelo de segurança](docs/security.md).
