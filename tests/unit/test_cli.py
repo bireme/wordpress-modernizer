@@ -6,6 +6,7 @@ import yaml
 from click.testing import CliRunner
 
 from wp_modernizer.cli.main import cli
+from wp_modernizer.cli.output import emit_plan
 from wp_modernizer.domain.enums import Capability, HealthStatus, RunStatus, StepStatus
 from wp_modernizer.domain.models import RunManifest, StepResult
 
@@ -216,3 +217,62 @@ def test_pipeline_json_contains_only_valid_json(tmp_path: Path, monkeypatch) -> 
     payload = json.loads(result.output)
     assert payload["run_id"] == "run-1"
     assert "log_path" in payload
+
+
+def test_plan_human_output_distinguishes_migration_from_modernization(
+    capsys,
+) -> None:
+    emit_plan(
+        {
+            "modernization": {
+                "site": {
+                    "modernization_class": "CURRENT",
+                    "initial_wordpress": "7.2",
+                    "policy_id": "wordpress-official-legacy-2026-09",
+                    "policy_revision": 1,
+                    "runtimes": [],
+                    "initial_php": None,
+                    "stages": [],
+                    "reason_code": "TARGET_POLICY_CONFIGURATION_REQUIRED",
+                    "manual_target_wordpress": None,
+                }
+            },
+            "execution_ready": False,
+            "execution_readiness": {
+                "migrate": {
+                    "status": "READY",
+                    "reason_codes": [],
+                },
+                "update": {
+                    "status": "BLOCKED",
+                    "reason_codes": ["TARGET_POLICY_CONFIGURATION_REQUIRED"],
+                },
+                "pipeline": {
+                    "status": "BLOCKED",
+                    "reason_codes": ["TARGET_POLICY_CONFIGURATION_REQUIRED"],
+                },
+            },
+            "provisioning_suggestions": [],
+        }
+    )
+
+    output = capsys.readouterr().out
+
+    assert "Modernization blocked: TARGET_POLICY_CONFIGURATION_REQUIRED" in output
+    assert "Migration: READY" in output
+    assert "Update: BLOCKED (TARGET_POLICY_CONFIGURATION_REQUIRED)" in output
+    assert "Pipeline: BLOCKED (TARGET_POLICY_CONFIGURATION_REQUIRED)" in output
+
+
+def test_plan_human_output_supports_legacy_readiness_payload(capsys) -> None:
+    emit_plan(
+        {
+            "modernization": {},
+            "execution_ready": False,
+            "provisioning_suggestions": [],
+        }
+    )
+
+    output = capsys.readouterr().out
+
+    assert "Execution readiness: BLOCKED" in output
