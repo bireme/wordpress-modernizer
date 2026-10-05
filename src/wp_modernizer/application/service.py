@@ -116,18 +116,35 @@ class ModernizerService:
     def plan(self, installation_id: str) -> Dict[str, Any]:
         plan = self._migration_plan(installation_id)
         payload = cast(Dict[str, Any], self._serializable(asdict(plan)))
-        payload["execution_ready"] = bool(plan.modernization) and all(
-            r.ready for r in plan.modernization.values()
+        modernization_ready = bool(plan.modernization) and all(
+            route.ready for route in plan.modernization.values()
         )
+
+        modernization_reason_codes = sorted(
+            {
+                route.reason_code
+                for route in plan.modernization.values()
+                if route.reason_code is not None
+            }
+        )
+
+        # Mantido por compatibilidade com consumidores existentes.
+        # Representa se a modernização completa está pronta.
+        payload["execution_ready"] = modernization_ready
+
         payload["execution_readiness"] = {
-            "status": "READY" if payload["execution_ready"] else "BLOCKED",
-            "reason_codes": sorted(
-                {
-                    route.reason_code
-                    for route in plan.modernization.values()
-                    if route.reason_code is not None
-                }
-            ),
+            Operation.MIGRATE.value: {
+                "status": "READY",
+                "reason_codes": [],
+            },
+            Operation.UPDATE.value: {
+                "status": "READY" if modernization_ready else "BLOCKED",
+                "reason_codes": ([] if modernization_ready else modernization_reason_codes),
+            },
+            Operation.PIPELINE.value: {
+                "status": "READY" if modernization_ready else "BLOCKED",
+                "reason_codes": ([] if modernization_ready else modernization_reason_codes),
+            },
         }
         if self._modernization:
             missing = {
@@ -237,7 +254,10 @@ class ModernizerService:
                     f"capabilities obrigatórias ausentes: {', '.join(missing)}"
                 )
         migration_plan = self._migration_plan(installation_id, local=operation is Operation.UPDATE)
-        if self._modernization is not None:
+        if self._modernization is not None and operation in {
+            Operation.UPDATE,
+            Operation.PIPELINE,
+        }:
             self._modernization.assert_ready(migration_plan.modernization)
         update_steps = (
             tuple(

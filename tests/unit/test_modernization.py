@@ -338,8 +338,67 @@ def test_plan_has_typed_route_runtime_inventory_missing_and_readiness() -> None:
     ]
     assert {runtime["name"] for runtime in route["runtimes"]} == {"7.4", "8.2", "current"}
     assert payload["missing_php_runtimes"][0]["requirement"]["exact"] == "7.4"
-    assert payload["execution_readiness"]["status"] == "BLOCKED"
+    assert payload["execution_readiness"]["migrate"]["status"] == "READY"
+    assert payload["execution_readiness"]["update"]["status"] == "BLOCKED"
+    assert payload["execution_readiness"]["pipeline"]["status"] == "BLOCKED"
+    assert payload["execution_ready"] is False
     assert payload["provisioning_suggestions"][0]["guidance"] == "manual only"
+
+
+def test_target_policy_block_does_not_block_migration() -> None:
+    service, operations = configured_service("7.2")
+
+    payload = service.plan("site")
+    route = payload["modernization"]["site"]
+
+    assert route["reason_code"] == "TARGET_POLICY_CONFIGURATION_REQUIRED"
+
+    assert payload["execution_readiness"]["migrate"]["status"] == "READY"
+    assert payload["execution_readiness"]["migrate"]["reason_codes"] == []
+
+    assert payload["execution_readiness"]["update"]["status"] == "BLOCKED"
+    assert payload["execution_readiness"]["update"]["reason_codes"] == [
+        "TARGET_POLICY_CONFIGURATION_REQUIRED"
+    ]
+
+    assert payload["execution_readiness"]["pipeline"]["status"] == "BLOCKED"
+    assert payload["execution_readiness"]["pipeline"]["reason_codes"] == [
+        "TARGET_POLICY_CONFIGURATION_REQUIRED"
+    ]
+
+    result = service.execute(
+        Operation.MIGRATE,
+        "site",
+        dry_run=False,
+    )
+
+    assert result.operation is Operation.MIGRATE
+    assert operations.calls
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        Operation.UPDATE,
+        Operation.PIPELINE,
+    ],
+)
+def test_target_policy_block_still_blocks_modernization_operations(
+    operation: Operation,
+) -> None:
+    service, operations = configured_service("7.2")
+
+    with pytest.raises(
+        MissingCapabilityError,
+        match="TARGET_POLICY_CONFIGURATION_REQUIRED",
+    ):
+        service.execute(
+            operation,
+            "site",
+            dry_run=False,
+        )
+
+    assert operations.calls == []
 
 
 def test_ancient_pipeline_blocks_before_any_wordpress_operation() -> None:

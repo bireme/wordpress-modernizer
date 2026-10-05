@@ -236,7 +236,7 @@ def emit_plan(payload: dict[str, object]) -> None:
                 + ("available" if initial_php["satisfies_requirement"] else "missing/incompatible")
             )
         if route.get("reason_code"):
-            click.echo(f"BLOCKED: {route['reason_code']}")
+            click.echo(f"Modernization blocked: {route['reason_code']}")
         if route.get("manual_target_wordpress"):
             click.echo(
                 f"Automatic modernization starts at WordPress {route['manual_target_wordpress']}."
@@ -271,4 +271,26 @@ def emit_plan(payload: dict[str, object]) -> None:
             for key in ("install", "verify", "remove"):
                 if suggestion[key]:
                     click.echo(f"  {key.title()}: {shlex.join(suggestion[key])}")
-    click.echo("Execution readiness: " + ("READY" if payload.get("execution_ready") else "BLOCKED"))
+    readiness = payload.get("execution_readiness")
+
+    if isinstance(readiness, dict):
+        click.echo("Execution readiness:")
+
+        for operation in ("migrate", "update", "pipeline"):
+            item = readiness.get(operation)
+
+            if not isinstance(item, dict):
+                continue
+
+            status = str(item.get("status", "UNKNOWN"))
+            reasons = item.get("reason_codes", [])
+
+            reason_text = ""
+            if isinstance(reasons, list) and reasons:
+                reason_text = " (" + ", ".join(str(reason) for reason in reasons) + ")"
+
+            click.echo(f"  {_operation_label(operation)}: {status}{reason_text}")
+    else:
+        click.echo(
+            "Execution readiness: " + ("READY" if payload.get("execution_ready") else "BLOCKED")
+        )
