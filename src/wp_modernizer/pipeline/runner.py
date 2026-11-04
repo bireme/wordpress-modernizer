@@ -111,9 +111,19 @@ class PipelineRunner:
             probe_path = node.effective_destination_path if node is not None else installation_path
             # A just-copied wp-config may still reference PRODUCTION. Never bootstrap it
             # until the test database configuration has been written.
+            # A successful no-op backup of an absent destination must not
+            # bootstrap WordPress before copy_files creates that installation.
+            # Failed backups and backups of existing destinations retain their checks.
+            absent_destination_backup = (
+                step.name == "backup_existing_test"
+                and result.status is StepStatus.EXECUTED
+                and not result.changed
+                and result.metrics.get("destination_absent") == 1
+            )
             probe_requirements = (
                 set()
-                if step.name
+                if absent_destination_backup
+                or step.name
                 in {
                     "copy_files",
                     "snapshot_source_database",

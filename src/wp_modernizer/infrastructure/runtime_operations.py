@@ -157,7 +157,15 @@ class RuntimeOperations:
             if self._filesystem is None:
                 return self._failed(step_name, "o adaptador de backup local não está configurado")
             if not self._filesystem.exists(path):
-                return self._ok(step_name, False, "não há cópia de teste existente")
+                # A missing destination is expected before its first transfer.
+                # Signal it explicitly so the runner does not bootstrap an absent WP.
+                return StepResult(
+                    step_name,
+                    StepStatus.SUCCEEDED,
+                    False,
+                    "não há cópia de teste existente",
+                    {"destination_absent": 1},
+                )
             if not context.get("replace_existing"):
                 return self._failed(
                     step_name, "a cópia de teste existente requer --replace-existing"
@@ -402,7 +410,7 @@ class RuntimeOperations:
             return self._failed(step_name, str(exc))
         try:
             source_url = self._databases.read_source_site_url(source_connection)
-            source_installation = self._parser.parse(
+            source_installation = self._parser.parse_source(
                 str(source_path), installation_id, installation.source_environment
             )
             test_url = OrganizationalTestUrlPolicy(source_installation.domain).resolve(

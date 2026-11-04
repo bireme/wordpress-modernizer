@@ -67,3 +67,66 @@ def test_safe_nested_names_round_trip(name: str) -> None:
     parser = InstallationPathParser([Path("/home/apps")])
     item = parser.parse(f"/home/apps/example.org/wp-main/htdocs/{name}", "site", Environment.TEST)
     assert str(item.relative_nested_path) == name
+
+
+@pytest.mark.parametrize("nested", ["", "/guias-e-manuais"])
+def test_archived_production_source_preserves_actual_path(parser, nested):
+    path = "/home/apps/example.org/wp-main/htdocs_20261014" + nested
+    item = parser.parse_source(path, "site", Environment.PRODUCTION)
+    assert item.path == Path(path)
+    assert item.document_root == Path("/home/apps/example.org/wp-main/htdocs_20261014")
+    assert item.relative_nested_path == (Path("guias-e-manuais") if nested else None)
+    with pytest.raises(UnsafeOperationError):
+        parser.parse(path, "site", Environment.TEST)
+
+
+@pytest.mark.parametrize(
+    "document_root",
+    ["htdocs_backup", "htdocs_20260230", "htdocs_202610", "htdocs_20261014_extra"],
+)
+def test_invalid_archive_source_is_rejected(parser, document_root):
+    with pytest.raises(UnsafeOperationError):
+        parser.parse_source(
+            f"/home/apps/example.org/wp-main/{document_root}/guide",
+            "site",
+            Environment.PRODUCTION,
+        )
+
+
+def test_archived_source_is_rejected_for_test_environment(parser):
+    with pytest.raises(UnsafeOperationError):
+        parser.parse_source(
+            "/home/apps/example.org/wp-main/htdocs_20261014/guide",
+            "site",
+            Environment.TEST,
+        )
+
+
+def test_archive_cannot_become_destructive_target_by_changing_environment(parser):
+    from dataclasses import replace
+
+    item = parser.parse_source(
+        "/home/apps/example.org/wp-main/htdocs_20261014/guide",
+        "site",
+        Environment.PRODUCTION,
+    )
+    with pytest.raises(UnsafeOperationError):
+        parser.assert_safe_destructive_target(
+            item.path, replace(item, environment=Environment.TEST)
+        )
+
+
+def test_archive_source_rejects_traversal_and_disallowed_roots(parser):
+    for path in (
+        "/tmp/example.org/wp-main/htdocs_20261014/guide",
+        "/home/apps/example.org/wp-main/htdocs_20261014/../guide",
+    ):
+        with pytest.raises(UnsafeOperationError):
+            parser.parse_source(path, "site", Environment.PRODUCTION)
+
+
+def test_source_parser_preserves_traditional_source_support(parser):
+    path = "/home/apps/example.org/wp-main/htdocs/guide"
+    assert parser.parse_source(path, "site", Environment.PRODUCTION) == parser.parse(
+        path, "site", Environment.PRODUCTION
+    )

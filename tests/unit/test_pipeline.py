@@ -299,3 +299,62 @@ def test_resume_detects_manual_intervention() -> None:
     old.filesystem_fingerprint = "before"
     with pytest.raises(ResumeConsistencyError, match="Intervenção manual"):
         runner.assert_resume_consistent(old, Path("/site"))
+
+
+@pytest.mark.parametrize("absent", [True, False])
+def test_backup_absent_destination_does_not_require_wordpress(absent) -> None:
+    class BackupOperations(FakeOperations):
+        def execute(self, step_name, context):
+            return StepResult(
+                step_name,
+                StepStatus.EXECUTED,
+                False,
+                "backup result",
+                {"destination_absent": 1} if absent else {},
+            )
+
+    probe = FakeProbe(
+        [
+            health(HealthStatus.HEALTHY),
+            health(HealthStatus.PHP_CONFIG_ERROR),
+        ]
+    )
+    result = PipelineRunner(probe, FakeStateStore(), FakeFileSystem(), FakeClock()).run(
+        manifest(),
+        Path("/site"),
+        [OperationStep("backup_existing_test", BackupOperations())],
+        {},
+    )
+
+    if absent:
+        assert result.status is RunStatus.EXECUTED
+        assert result.last_successful_step == "backup_existing_test"
+    else:
+        assert result.status is RunStatus.UPDATE_FAILED_PRESERVED
+        assert result.failed_step == "backup_existing_test"
+
+
+def test_absent_destination_marker_does_not_hide_backup_failure() -> None:
+    class FailedBackupOperations(FakeOperations):
+        def execute(self, step_name, context):
+            return StepResult(
+                step_name,
+                StepStatus.FAILED,
+                False,
+                "backup failed",
+                {"destination_absent": 1},
+            )
+
+    result = PipelineRunner(
+        FakeProbe([health(HealthStatus.HEALTHY)]),
+        FakeStateStore(),
+        FakeFileSystem(),
+        FakeClock(),
+    ).run(
+        manifest(),
+        Path("/site"),
+        [OperationStep("backup_existing_test", FailedBackupOperations())],
+        {},
+    )
+    assert result.status is RunStatus.UPDATE_FAILED_PRESERVED
+    assert result.failed_step == "backup_existing_test"

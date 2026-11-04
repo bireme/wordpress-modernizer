@@ -12,7 +12,7 @@ from wp_modernizer.config.models import (
     ManagedPluginConfig,
     ServerConfig,
 )
-from wp_modernizer.domain.errors import ConfigurationError
+from wp_modernizer.domain.errors import ConfigurationError, UnsafeOperationError
 
 
 def valid_config():
@@ -329,3 +329,32 @@ def test_password_authentication_accepts_secret_reference_and_rejects_private_ke
 def test_config_rejects_unsafe_plugin_slugs(slug: str) -> None:
     with pytest.raises(ValidationError, match="slug"):
         ManagedPluginConfig(slug=slug, repository="repo")
+
+
+def test_config_accepts_archived_source_with_explicit_standard_destination():
+    raw = valid_config()
+    item = raw["installations"]["i"]
+    item["source_path"] = "/home/apps/example.org/wp-main/htdocs_20261014/guide"
+    item["destination_path"] = "/home/apps/example.org/wp-test/htdocs/guide"
+    configured = ApplicationConfig.model_validate(raw).installations["i"]
+    assert configured.source_path == Path(item["source_path"])
+    assert configured.effective_destination_path == Path(item["destination_path"])
+
+
+def test_config_rejects_archived_source_without_explicit_destination():
+    raw = valid_config()
+    raw["installations"]["i"]["source_path"] = (
+        "/home/apps/example.org/wp-main/htdocs_20261014/guide"
+    )
+    del raw["installations"]["i"]["destination_path"]
+    with pytest.raises(UnsafeOperationError, match="Origem arquivada requer"):
+        ApplicationConfig.model_validate(raw)
+
+
+def test_config_rejects_explicit_archived_destination():
+    raw = valid_config()
+    raw["installations"]["i"]["destination_path"] = (
+        "/home/apps/example.org/wp-test/htdocs_20261014/guide"
+    )
+    with pytest.raises(UnsafeOperationError, match="Origem arquivada requer"):
+        ApplicationConfig.model_validate(raw)

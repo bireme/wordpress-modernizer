@@ -123,3 +123,56 @@ em cada invocação de `resume`; uma autorização anterior não é herdada. O r
 MySQL e relê as opções para verificar o resultado. Em dry-run não restaura widgets.
 
 O formato e os caminhos do state estão em [observabilidade](observability.md).
+
+## Destino ausente antes da cópia de uma instalação aninhada
+
+Ao substituir a instalação pai, suas instalações filhas podem deixar de existir
+no destino até serem transferidas por suas próprias etapas. O backup completo
+do pai preserva a árvore anterior.
+
+Quando `backup_existing_test` encontra um destino ausente, retorna sucesso sem
+alteração e a métrica `destination_absent: 1`. Nesse caso específico, o executor
+não exige bootstrap do WordPress no diagnóstico posterior ao backup, pois a
+transferência ainda não ocorreu.
+
+A exceção exige sucesso da etapa, ausência de alteração e a métrica explícita.
+Backups que falham ou destinos existentes mantêm as verificações anteriores.
+As validações posteriores à transferência e à configuração do banco continuam
+vigentes. A correção não modifica permissões, backups, configuração YAML ou
+manifestos de execuções existentes.
+
+Testes em `tests/unit/test_pipeline.py` cobrem destino ausente, regressão em
+destino existente e falha de backup mesmo com a métrica de ausência.
+
+O teste de integração local em `tests/contract/test_runtime_pipeline_backup.py`
+exercita `RuntimeOperations`, `PipelineRunner` e `LocalFileSystem` em conjunto.
+Valida a detecção de um destino filho ausente e a métrica produzida pela operação
+real de backup, a continuidade até a transferência sem bootstrap prematuro,
+a interrupção por falha real no armazenamento do backup e a obrigatoriedade
+dos diagnósticos normais após a transferência, no checkpoint `preflight`.
+Uma regressão nesse checkpoint impede a atualização seguinte. Somente as portas
+externas, o diagnóstico e a persistência de estado usam substitutos de teste;
+não são necessários SSH, banco ou WordPress. O teste faz parte da execução
+padrão do CI; o marcador `integration` é reservado a infraestrutura externa.
+
+## Origem de produção em htdocs arquivado
+
+A leitura da origem aceita htdocs ou htdocs_YYYYMMDD, com data válida,
+dentro das raízes permitidas e da estrutura <domain>/wp-<instance>/.
+O formato arquivado é aceito por parse_source somente em PRODUÇÃO.
+
+A configuração, o planejamento e a inspeção do banco usam parse_source
+para a origem. A validação dos destinos continua exigindo htdocs.
+O destino destrutivo é revalidado pelo analisador estrito, além das
+proteções existentes de ambiente, caminho exato e links simbólicos.
+
+Uma origem arquivada exige destination_path explícito apontando para
+o htdocs de TESTE. A ausência desse override faz a validação recusar
+o destino herdado da origem.
+
+Os testes de caminhos e configuração cobrem origens convencionais e arquivadas,
+datas inválidas, raízes não permitidas, travessia de caminhos, recusa de origens
+arquivadas fora de PRODUÇÃO e exigência de destino explícito convencional.
+Também verificam que a proteção destrutiva continua recusando caminhos arquivados.
+A validação operacional incluiu um dry-run individual de `lilacs-guias-pt`,
+sem falhas e sem alteração de arquivos na produção.

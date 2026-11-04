@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -24,6 +25,27 @@ class InstallationPathParser:
     def parse(
         self, raw_path: str, installation_id: str, environment: Environment
     ) -> WordPressInstallation:
+        return self._parse(raw_path, installation_id, environment)
+
+    def parse_source(
+        self, raw_path: str, installation_id: str, environment: Environment
+    ) -> WordPressInstallation:
+        """Allow dated document roots only for reading a PRODUCTION source."""
+        return self._parse(
+            raw_path,
+            installation_id,
+            environment,
+            allow_archive=environment is Environment.PRODUCTION,
+        )
+
+    def _parse(
+        self,
+        raw_path: str,
+        installation_id: str,
+        environment: Environment,
+        *,
+        allow_archive: bool = False,
+    ) -> WordPressInstallation:
         if not raw_path or "\x00" in raw_path:
             raise UnsafeOperationError("O caminho da instalação está vazio ou contém NUL")
         raw = Path(raw_path)
@@ -37,7 +59,17 @@ class InstallationPathParser:
         if len(relative.parts) < 3:
             raise UnsafeOperationError("Esperado: <domain>/wp-<instance>/htdocs")
         domain, instance_dir, document_dir, *nested = relative.parts
-        if document_dir != "htdocs" or not instance_dir.startswith("wp-"):
+        if document_dir != "htdocs":
+            archive = re.fullmatch(r"htdocs_([0-9]{8})", document_dir)
+            if not allow_archive or archive is None:
+                raise UnsafeOperationError(
+                    "Origem arquivada requer PRODUÇÃO e formato htdocs_YYYYMMDD"
+                )
+            try:
+                datetime.strptime(archive.group(1), "%Y%m%d")
+            except ValueError as exc:
+                raise UnsafeOperationError("Data inválida na origem arquivada") from exc
+        if not instance_dir.startswith("wp-"):
             raise UnsafeOperationError(
                 "O caminho não corresponde à estrutura configurada do WordPress"
             )
@@ -47,7 +79,7 @@ class InstallationPathParser:
         instance_name = instance_dir[3:]
         if not instance_name:
             raise UnsafeOperationError("O nome da instância não pode estar vazio")
-        docroot = root / domain / instance_dir / "htdocs"
+        docroot = root / domain / instance_dir / document_dir
         nested_path: Optional[Path] = Path(*nested) if nested else None
         return WordPressInstallation(
             installation_id=installation_id,
@@ -66,6 +98,9 @@ class InstallationPathParser:
         canonical = path.resolve(strict=False)
         if installation.environment is not Environment.TEST:
             raise UnsafeOperationError("Operações destrutivas são proibidas fora de TESTE")
+        # Destructive targets must always pass the strict htdocs parser,
+        # even if an installation object originated from parse_source.
+        self.parse(str(path), installation.installation_id, installation.environment)
         if is_symlink or os.path.islink(path):
             raise UnsafeOperationError("Destino destrutivo recusado por ser um link simbólico")
         if canonical != installation.path or canonical == installation.document_root.parent:

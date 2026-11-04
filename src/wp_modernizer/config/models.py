@@ -262,7 +262,7 @@ class ServerEnvironmentConfig(BaseModel):
     def installation_paths_are_safe_and_unambiguous(self) -> "ServerEnvironmentConfig":
         parser = InstallationPathParser(self.allowed_app_roots)
         for installation_id, item in self.installations.items():
-            parser.parse(str(item.source_path), installation_id, item.source_environment)
+            parser.parse_source(str(item.source_path), installation_id, item.source_environment)
             parser.parse(
                 str(item.effective_destination_path),
                 installation_id,

@@ -188,7 +188,9 @@ class ModernizerService:
                 or item.effective_destination_path in candidate.effective_destination_path.parents
             ):
                 installations.append(parsed)
-        source = self._parser.parse(str(item.source_path), installation_id, item.source_environment)
+        source = self._parser.parse_source(
+            str(item.source_path), installation_id, item.source_environment
+        )
         pending = (
             PendingOperation(
                 PendingOperationType.SEARCH_REPLACE,
